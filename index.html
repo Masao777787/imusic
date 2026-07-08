@@ -5,25 +5,25 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>iMusic - Full Feature Edition</title>
+  <title>iMusic - Basic Player</title>
   
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Google APIライブラリの読み込み -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="https://apis.google.com/js/api.js" async defer></script>
   
   <style>
-    body { -webkit-tap-highlight-color: transparent; background-color: #0f172a; color: #f8fafc; font-family: -apple-system, sans-serif; }
+    body { -webkit-tap-highlight-color: transparent; background-color: #0f172a; color: #f8fafc; font-family: sans-serif; }
   </style>
 </head>
-<body class="h-screen flex flex-col overflow-hidden select-none">
+<body class="h-screen flex flex-col">
 
-  <!-- 設定モーダル -->
   <div id="auth-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4">
     <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-6">
       <h2 class="text-xl font-bold mb-4">初期設定</h2>
       <input type="text" id="client-id-input" class="w-full bg-slate-800 p-3 rounded-lg mb-4" placeholder="Client ID">
-      <button id="save-config-btn" class="w-full bg-blue-600 py-3 rounded-lg font-bold">保存してログイン</button>
+      <button id="save-config-btn" class="w-full bg-blue-600 py-3 rounded-lg font-bold">保存して認証開始</button>
     </div>
   </div>
 
@@ -38,11 +38,13 @@
 
   <div class="bg-slate-950 p-6 border-t border-slate-800">
     <div class="flex items-center gap-4">
-      <img id="player-jacket" src="" class="w-16 h-16 rounded bg-slate-800 object-cover">
-      <div class="flex-1 overflow-hidden">
-        <h3 id="track-title" class="font-bold truncate">曲を選択してください</h3>
+      <div id="player-jacket" class="w-16 h-16 rounded bg-slate-800 flex items-center justify-center">
+        <i data-lucide="music" class="text-slate-600"></i>
       </div>
-      <button id="play-pause-btn" class="p-4 bg-blue-600 rounded-full"><i data-lucide="play"></i></button>
+      <div class="flex-1 overflow-hidden">
+        <h3 id="track-title" class="font-bold truncate">再生待ち</h3>
+      </div>
+      <button id="play-pause-btn" class="p-4 bg-blue-600 rounded-full"><i data-lucide="play" id="play-icon"></i></button>
     </div>
   </div>
 
@@ -51,28 +53,24 @@
   <script>
     const authModal = document.getElementById('auth-modal');
     
-    // ログイン処理開始
+    // 設定保存と初期化
     document.getElementById('save-config-btn').onclick = () => {
       const clientId = document.getElementById('client-id-input').value.trim();
       if (!clientId) return alert("Client IDを入力してください");
-      
       localStorage.setItem('imusic_client_id', clientId);
-      
-      // Google Identity Services 認証開始
-      google.accounts.id.initialize({
-        client_id: clientId,
-        callback: (res) => {
-          console.log("認証成功:", res);
-          authModal.classList.add('hidden');
-          // ここでドライブのスキャンを開始する関数を呼び出します
-        }
-      });
-      google.accounts.id.prompt();
+      authModal.classList.add('hidden');
+      alert("設定を保存しました。リロードして認証を試してください。");
+      location.reload();
     };
 
     document.getElementById('settings-btn').onclick = () => authModal.classList.remove('hidden');
-    
-    window.onload = () => lucide.createIcons();
+
+    // ライブラリ初期化
+    window.onload = () => {
+      lucide.createIcons();
+      // ここにドライブのスキャンとリスト表示のメインロジックを復旧させます
+      console.log("iMusic 初期化完了");
+    };
   </script>
 </body>
 </html>
