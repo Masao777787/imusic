@@ -4,113 +4,75 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="iMusic">
   <title>iMusic - Full Feature Edition</title>
   
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   
   <style>
-    body {
-      -webkit-tap-highlight-color: transparent;
-      background-color: #0f172a;
-      color: #f8fafc;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    }
-    ::-webkit-scrollbar { width: 6px; }
-    ::-webkit-scrollbar-track { background: #1e293b; }
-    ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
-    
-    /* PWA visual refinement */
-    :root { --sat: env(safe-area-inset-top); }
+    body { -webkit-tap-highlight-color: transparent; background-color: #0f172a; color: #f8fafc; font-family: -apple-system, sans-serif; }
   </style>
 </head>
 <body class="h-screen flex flex-col overflow-hidden select-none">
 
-  <div id="auth-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md p-4">
-    <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-6 shadow-2xl">
-      <div class="text-center mb-6">
-        <h2 class="text-2xl font-bold text-white">iMusic Full Edition</h2>
-        <p class="text-slate-400 text-sm">Google Drive Music Streaming Player</p>
-      </div>
-
-      <div class="space-y-4">
-        <div>
-          <label class="block text-xs font-semibold text-slate-400 mb-1">Google Client ID</label>
-          <input type="text" id="client-id-input" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200" placeholder="XXXXX.apps.googleusercontent.com">
-        </div>
-        
-        <button id="save-config-btn" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-3 rounded-xl transition-all">
-          設定を保存してログイン
-        </button>
-      </div>
+  <!-- 設定モーダル -->
+  <div id="auth-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-6">
+      <h2 class="text-xl font-bold mb-4">初期設定</h2>
+      <input type="text" id="client-id-input" class="w-full bg-slate-800 p-3 rounded-lg mb-4" placeholder="Client ID">
+      <button id="save-config-btn" class="w-full bg-blue-600 py-3 rounded-lg font-bold">保存してログイン</button>
     </div>
   </div>
 
-  <header class="bg-slate-900/80 border-b border-slate-800 backdrop-blur-md px-4 py-3 flex items-center justify-between z-10">
-    <div class="flex items-center gap-2">
-      <div class="bg-gradient-to-tr from-blue-600 to-indigo-600 p-1.5 rounded-lg shadow-lg">
-        <i data-lucide="headphones" class="w-5 h-5 text-white"></i>
-      </div>
-      <span class="font-bold text-lg text-white">iMusic</span>
-    </div>
-    <button id="settings-btn" class="p-2 text-slate-400 hover:text-white"><i data-lucide="settings" class="w-5 h-5"></i></button>
+  <header class="bg-slate-900/80 border-b border-slate-800 px-4 py-3 flex justify-between items-center">
+    <span class="font-bold">iMusic</span>
+    <button id="settings-btn"><i data-lucide="settings"></i></button>
   </header>
 
-  <main class="flex-1 flex flex-col md:flex-row overflow-hidden">
-    <div class="flex-1 overflow-y-auto px-4 py-3" id="list-container">
-      <div id="album-list" class="space-y-2"></div>
-    </div>
-
-    <!-- Right Side: Player Controls -->
-    <div class="flex-1 bg-slate-950 p-6 flex flex-col items-center justify-center border-t md:border-t-0 md:border-l border-slate-800">
-      <div id="media-view" class="w-full max-w-[300px] aspect-square rounded-2xl bg-slate-900 shadow-xl mb-6 overflow-hidden flex items-center justify-center">
-        <img id="player-jacket" src="" class="w-full h-full object-cover">
-      </div>
-      
-      <div class="w-full max-w-[300px] text-center mb-4">
-        <h3 id="track-title" class="text-lg font-bold text-white truncate">Select a track</h3>
-        <p id="track-album" class="text-sm text-slate-400">Ready to play</p>
-      </div>
-
-      <div class="w-full max-w-[300px] flex items-center justify-between gap-4">
-        <button id="prev-btn" class="text-slate-300"><i data-lucide="skip-back" class="w-8 h-8"></i></button>
-        <button id="play-pause-btn" class="w-16 h-16 bg-blue-600 rounded-full flex items-center justify-center text-white shadow-lg shadow-blue-900/50">
-          <i data-lucide="play" class="w-8 h-8 fill-current"></i>
-        </button>
-        <button id="next-btn" class="text-slate-300"><i data-lucide="skip-forward" class="w-8 h-8"></i></button>
-      </div>
-    </div>
+  <main class="flex-1 overflow-y-auto p-4" id="list-container">
+    <div id="album-list" class="space-y-2"></div>
   </main>
+
+  <div class="bg-slate-950 p-6 border-t border-slate-800">
+    <div class="flex items-center gap-4">
+      <img id="player-jacket" src="" class="w-16 h-16 rounded bg-slate-800 object-cover">
+      <div class="flex-1 overflow-hidden">
+        <h3 id="track-title" class="font-bold truncate">曲を選択してください</h3>
+      </div>
+      <button id="play-pause-btn" class="p-4 bg-blue-600 rounded-full"><i data-lucide="play"></i></button>
+    </div>
+  </div>
 
   <audio id="audio-element" class="hidden"></audio>
 
   <script>
-    // Simplified logic core for demonstration
     const authModal = document.getElementById('auth-modal');
-    const settingsBtn = document.getElementById('settings-btn');
-    const playPauseBtn = document.getElementById('play-pause-btn');
-    const audio = document.getElementById('audio-element');
-
-    settingsBtn.onclick = () => authModal.classList.remove('hidden');
     
-    // Core Play Logic
-    playPauseBtn.onclick = () => {
-      if(audio.paused) {
-        audio.play();
-        playPauseBtn.innerHTML = '<i data-lucide="pause" class="w-8 h-8 fill-current"></i>';
-      } else {
-        audio.pause();
-        playPauseBtn.innerHTML = '<i data-lucide="play" class="w-8 h-8 fill-current"></i>';
-      }
-      lucide.createIcons();
+    // ログイン処理開始
+    document.getElementById('save-config-btn').onclick = () => {
+      const clientId = document.getElementById('client-id-input').value.trim();
+      if (!clientId) return alert("Client IDを入力してください");
+      
+      localStorage.setItem('imusic_client_id', clientId);
+      
+      // Google Identity Services 認証開始
+      google.accounts.id.initialize({
+        client_id: clientId,
+        callback: (res) => {
+          console.log("認証成功:", res);
+          authModal.classList.add('hidden');
+          // ここでドライブのスキャンを開始する関数を呼び出します
+        }
+      });
+      google.accounts.id.prompt();
     };
 
-    window.onload = () => {
-      lucide.createIcons();
-      // Logic for authentication, scanning, and media playback initialized here
-    };
+    document.getElementById('settings-btn').onclick = () => authModal.classList.remove('hidden');
+    
+    window.onload = () => lucide.createIcons();
   </script>
 </body>
 </html>
