@@ -3,74 +3,859 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="mobile-web-app-capable" content="yes">
-  <title>iMusic - Basic Player</title>
-  
+  <title>iMusic - Google Drive Player</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
-  <!-- Google APIライブラリの読み込み -->
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script src="https://apis.google.com/js/api.js" async defer></script>
-  
   <style>
-    body { -webkit-tap-highlight-color: transparent; background-color: #0f172a; color: #f8fafc; font-family: sans-serif; }
+    body {
+      -webkit-tap-highlight-color: transparent;
+      background-color: #0f172a;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
   </style>
 </head>
-<body class="h-screen flex flex-col">
+<body class="h-screen flex flex-col overflow-hidden select-none">
 
-  <div id="auth-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4">
-    <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-6">
-      <h2 class="text-xl font-bold mb-4">初期設定</h2>
-      <input type="text" id="client-id-input" class="w-full bg-slate-800 p-3 rounded-lg mb-4" placeholder="Client ID">
-      <button id="save-config-btn" class="w-full bg-blue-600 py-3 rounded-lg font-bold">保存して認証開始</button>
+  <div id="iframe-warning-banner" class="hidden bg-amber-600 text-white px-4 py-2 text-xs font-semibold flex items-center justify-between z-50">
+    <div class="flex items-center gap-2">
+      <i data-lucide="alert-triangle" class="w-4 h-4 shrink-0"></i>
+      <span>【重要】プレビュー画面内ではGoogleログインがブロックされます。右のボタンから直接ページを開いてください。</span>
+    </div>
+    <button id="open-new-tab-btn" class="bg-white text-amber-900 px-2.5 py-1 rounded font-bold hover:bg-slate-100 transition-colors flex items-center gap-1">
+      新しいタブで開く <i data-lucide="external-link" class="w-3 h-3"></i>
+    </button>
+  </div>
+
+  <div id="auth-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-5 my-8">
+      <div class="text-center relative">
+        <button id="close-modal-btn" class="absolute -top-1 -right-1 p-1 text-slate-400 hover:text-white rounded-full hover:bg-slate-800 transition-colors hidden">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+        <div class="mx-auto w-14 h-14 bg-blue-600/20 text-blue-500 rounded-full flex items-center justify-center mb-3">
+          <i data-lucide="music" class="w-7 h-7"></i>
+        </div>
+        <h2 class="text-2xl font-bold">iMusic Player</h2>
+        <p class="text-xs text-slate-400 mt-1">Google OAuth 2.0 ポリシー対応版 (v2.2.0 安定版)</p>
+      </div>
+
+      <div class="flex border-b border-slate-800">
+        <button id="tab-auto-btn" class="flex-1 pb-2 text-sm font-semibold border-b-2 border-blue-500 text-blue-400">方法1: 自動認証 (推奨)</button>
+        <button id="tab-manual-btn" class="flex-1 pb-2 text-sm font-semibold border-b-2 border-transparent text-slate-400 hover:text-slate-200">方法2: 手動トークン (回避用)</button>
+      </div>
+
+      <div id="tab-auto-content" class="space-y-4">
+        <div>
+          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Google API Client ID</label>
+          <input type="text" id="client-id-input" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-blue-500" placeholder="XXXXX.apps.googleusercontent.com">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">API Key (任意/画像の読み込みに使用)</label>
+          <input type="password" id="api-key-input" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-blue-500" placeholder="AIzaSy...">
+        </div>
+
+        <div class="bg-slate-950 p-3 rounded-lg border border-slate-800 text-xs space-y-2">
+          <div class="font-semibold text-amber-400 flex items-center gap-1">
+            <i data-lucide="alert-triangle" class="w-3.5 h-3.5"></i> Google Cloud Consoleへの登録が必要です
+          </div>
+          <p class="text-slate-400 leading-relaxed">
+            Googleのセキュリティポリシー上、以下のドメインをOAuthクライアント設定の<b>「承認済みのJavaScript生成元」</b>に登録する必要があります。
+          </p>
+          <div class="flex items-center gap-2 bg-slate-900 p-2 rounded border border-slate-850">
+            <code id="current-origin-code" class="text-blue-400 font-mono text-[11px] select-all break-all flex-1">Loading origin...</code>
+            <button id="copy-origin-btn" class="p-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded transition-colors" title="コピーする">
+              <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div id="tab-manual-content" class="space-y-4 hidden">
+        <div>
+          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Google Access Token (OAuth 2.0)</label>
+          <textarea id="access-token-input" rows="3" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500" placeholder="ya29.a0Ac..."></textarea>
+          <p class="text-[10px] text-slate-500 mt-1">※有効期限は1時間です。期限切れの際は再貼り付けが必要です。</p>
+        </div>
+      </div>
+
+      <div class="space-y-2 pt-2">
+        <button id="save-config-btn" class="w-full bg-blue-600 hover:bg-blue-500 active:scale-[0.98] transition-all text-white font-medium py-2.5 rounded-lg text-sm flex items-center justify-center gap-2">
+          <i data-lucide="save" class="w-4 h-4"></i> 設定を保存
+        </button>
+        <button id="login-btn" class="w-full bg-slate-800 hover:bg-slate-700 active:scale-[0.98] transition-all text-slate-200 font-medium py-2.5 rounded-lg text-sm flex items-center justify-center gap-2 hidden">
+          <i data-lucide="log-in" class="w-4 h-4"></i> Googleアカウントでログイン
+        </button>
+      </div>
     </div>
   </div>
 
-  <header class="bg-slate-900/80 border-b border-slate-800 px-4 py-3 flex justify-between items-center">
-    <span class="font-bold">iMusic</span>
-    <button id="settings-btn"><i data-lucide="settings"></i></button>
+  <header class="bg-slate-900/80 border-b border-slate-800 backdrop-blur-md px-4 py-3 flex items-center justify-between z-10">
+    <div class="flex items-center gap-2">
+      <div class="bg-gradient-to-tr from-blue-600 to-indigo-600 p-1.5 rounded-lg shadow-lg">
+        <i data-lucide="headphones" class="w-5 h-5 text-white"></i>
+      </div>
+      <span class="font-bold tracking-tight text-lg bg-gradient-to-r from-white via-slate-100 to-slate-400 bg-clip-text text-transparent">iMusic</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <button id="reload-btn" class="p-2 text-slate-400 hover:text-white transition-colors" title="再読み込み">
+        <i data-lucide="rotate-cw" class="w-5 h-5"></i>
+      </button>
+      <button id="settings-btn" class="p-2 text-slate-400 hover:text-white transition-colors" title="設定を開く">
+        <i data-lucide="settings" class="w-5 h-5"></i>
+      </button>
+      <div id="user-avatar" class="w-8 h-8 rounded-full bg-slate-700 overflow-hidden border border-slate-600 hidden">
+        <img id="user-img" src="" alt="User" class="w-full h-full object-cover">
+      </div>
+    </div>
   </header>
 
-  <main class="flex-1 overflow-y-auto p-4" id="list-container">
-    <div id="album-list" class="space-y-2"></div>
+  <main class="flex-1 flex flex-col md:flex-row overflow-hidden relative">
+    
+    <div class="flex-1 flex flex-col border-r border-slate-800/80 overflow-hidden h-1/2 md:h-full">
+      <div class="bg-slate-900/40 px-4 py-2 border-b border-slate-800/50 flex items-center justify-between text-xs">
+        <div class="flex items-center gap-1.5 text-slate-400">
+          <i data-lucide="folder" class="w-3.5 h-3.5 text-yellow-500"></i>
+          <span>imusic / </span>
+          <span id="current-folder-path" class="text-blue-400 font-medium">接続待ち...</span>
+        </div>
+        <span id="status-badge" class="px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 font-mono text-[10px]">offline</span>
+      </div>
+
+      <div id="scan-progress" class="hidden bg-blue-950/40 border-b border-blue-900/30 px-4 py-2.5 text-xs text-blue-300 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <div class="animate-spin rounded-full h-3.5 w-3.5 border-2 border-blue-400 border-t-transparent"></div>
+          <span id="scan-text">Google Driveからimusicフォルダを検索中...</span>
+        </div>
+      </div>
+
+      <div class="flex-1 overflow-y-auto px-2 py-3" id="list-container">
+        <div id="list-placeholder" class="h-full flex flex-col items-center justify-center text-center p-6 text-slate-500">
+          <i data-lucide="folder-search" class="w-12 h-12 mb-3 stroke-[1.5]"></i>
+          <p class="text-sm font-medium">Google Driveに接続してください</p>
+        </div>
+        <div id="album-list" class="space-y-2 hidden"></div>
+      </div>
+    </div>
+
+    <div class="flex-1 flex flex-col bg-gradient-to-b from-slate-900 to-slate-950 overflow-y-auto md:overflow-hidden h-1/2 md:h-full p-4 md:p-6 justify-between">
+      
+      <div class="relative w-full max-w-[340px] md:max-w-[400px] aspect-square mx-auto rounded-2xl overflow-hidden bg-slate-950 shadow-2xl border border-slate-800/80 flex items-center justify-center group">
+        <img id="player-jacket" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 24 24' fill='none' stroke='%23334155' stroke-width='1' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'/><circle cx='12' cy='12' r='3'/></svg>" 
+             alt="Jacket Cover" 
+             class="w-full h-full object-cover transition-all duration-500">
+        
+        <video id="player-mv" class="absolute inset-0 w-full h-full object-contain bg-black hidden" playsinline preload="auto"></video>
+
+        <div class="absolute top-3 right-3 bg-black/60 backdrop-blur-md text-[10px] px-2.5 py-1 rounded-full text-slate-300 flex items-center gap-1 opacity-80 pointer-events-none">
+          <span id="media-type-badge-dot" class="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+          <span id="media-type-badge-text">AUDIO</span>
+        </div>
+
+        <div id="playing-visualizer" class="absolute bottom-3 left-3 flex gap-0.5 items-end h-5 hidden">
+          <span class="w-0.5 bg-blue-500 animate-[pulse_0.8s_infinite] h-3"></span>
+          <span class="w-0.5 bg-blue-500 animate-[pulse_0.5s_infinite] h-5"></span>
+          <span class="w-0.5 bg-blue-500 animate-[pulse_0.7s_infinite] h-4"></span>
+          <span class="w-0.5 bg-blue-500 animate-[pulse_0.6s_infinite] h-2"></span>
+        </div>
+      </div>
+
+      <div class="text-center mt-4 mb-2 max-w-[400px] mx-auto w-full">
+        <h3 id="track-title" class="text-lg md:text-xl font-bold truncate px-4 text-slate-100">再生していません</h3>
+        <p id="track-album" class="text-xs md:text-sm text-slate-400 mt-1 truncate px-4">アルバムを選択してください</p>
+      </div>
+
+      <div class="w-full max-w-[400px] mx-auto px-2">
+        <div class="flex items-center justify-between text-[11px] text-slate-400 font-mono mb-1">
+          <span id="time-current">0:00</span>
+          <span id="time-total">0:00</span>
+        </div>
+        <div class="relative group cursor-pointer" id="progress-bar-container">
+          <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+            <div id="progress-bar" class="bg-gradient-to-r from-blue-500 to-indigo-500 h-full w-0 transition-all duration-75"></div>
+          </div>
+          <div class="absolute -inset-y-2 inset-x-0"></div>
+        </div>
+      </div>
+
+      <div class="w-full max-w-[400px] mx-auto flex flex-col gap-4 mt-3">
+        <div class="flex items-center justify-between px-4">
+          <button id="shuffle-btn" class="p-2.5 text-slate-400 hover:text-white transition-colors rounded-full hover:bg-slate-800/40" title="シャッフル">
+            <i data-lucide="shuffle" class="w-5 h-5"></i>
+          </button>
+          <button id="prev-btn" class="p-2.5 text-slate-300 hover:text-white active:scale-95 transition-all rounded-full hover:bg-slate-800/40">
+            <i data-lucide="skip-back" class="w-6 h-6 fill-current"></i>
+          </button>
+          <button id="play-pause-btn" class="w-14 h-14 bg-blue-600 hover:bg-blue-500 active:scale-95 text-white flex items-center justify-center rounded-full shadow-lg shadow-blue-900/40 transition-all">
+            <i data-lucide="play" class="w-7 h-7 fill-current ml-0.5" id="play-icon"></i>
+          </button>
+          <button id="next-btn" class="p-2.5 text-slate-300 hover:text-white active:scale-95 transition-all rounded-full hover:bg-slate-800/40">
+            <i data-lucide="skip-forward" class="w-6 h-6 fill-current"></i>
+          </button>
+          <button id="loop-btn" class="p-2.5 text-slate-400 hover:text-white transition-colors rounded-full hover:bg-slate-800/40 relative" title="ループ">
+            <i data-lucide="repeat" class="w-5 h-5"></i>
+            <span id="loop-badge" class="absolute -top-0.5 -right-0.5 bg-blue-500 text-white text-[8px] font-bold w-4 h-4 flex items-center justify-center rounded-full scale-90 hidden">1</span>
+          </button>
+        </div>
+
+        <div class="flex items-center justify-between gap-4 px-2">
+          <button id="stop-btn" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-800 hover:bg-slate-800/60 text-xs text-slate-400 hover:text-white transition-all">
+            <i data-lucide="square" class="w-3.5 h-3.5 fill-current"></i> 停止
+          </button>
+          <div class="flex items-center gap-2 flex-1 max-w-[180px]">
+            <i data-lucide="volume-2" class="w-4 h-4 text-slate-400" id="volume-icon"></i>
+            <input type="range" id="volume-slider" min="0" max="1" step="0.05" value="0.8" class="w-full accent-blue-500 h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer">
+          </div>
+        </div>
+      </div>
+    </div>
   </main>
 
-  <div class="bg-slate-950 p-6 border-t border-slate-800">
-    <div class="flex items-center gap-4">
-      <div id="player-jacket" class="w-16 h-16 rounded bg-slate-800 flex items-center justify-center">
-        <i data-lucide="music" class="text-slate-600"></i>
-      </div>
-      <div class="flex-1 overflow-hidden">
-        <h3 id="track-title" class="font-bold truncate">再生待ち</h3>
-      </div>
-      <button id="play-pause-btn" class="p-4 bg-blue-600 rounded-full"><i data-lucide="play" id="play-icon"></i></button>
-    </div>
+  <audio id="audio-element" class="hidden" preload="auto"></audio>
+
+  <div id="toast" class="fixed bottom-4 left-1/2 -translate-x-1/2 bg-slate-900 border border-slate-800 text-slate-200 text-xs py-2.5 px-4 rounded-xl shadow-xl flex items-center gap-2 transition-all duration-300 opacity-0 translate-y-4 pointer-events-none z-50">
+    <i data-lucide="info" class="w-4 h-4 text-blue-500" id="toast-icon"></i>
+    <span id="toast-message">メッセージ</span>
   </div>
 
-  <audio id="audio-element" class="hidden"></audio>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="https://apis.google.com/js/api.js" async defer></script>
 
   <script>
+    const APP_VERSION = "2.2.0";
+    let CLIENT_ID = "";
+    let API_KEY = "";
+    const SCOPES = "https://www.googleapis.com/auth/drive.readonly";
+
+    let accessToken = null;
+    let gapiInited = false;
+    let gisInited = false;
+    let tokenClient = null;
+    let activeTab = 'auto';
+
+    let musicLibrary = []; 
+    let currentPlaylist = []; 
+    let originalPlaylist = []; 
+    let currentTrackIndex = -1;
+    let currentAlbum = null;
+
+    let loopMode = 'none'; 
+    let isShuffle = false;
+
     const authModal = document.getElementById('auth-modal');
+    const closeModalBtn = document.getElementById('close-modal-btn');
+    const clientIdInput = document.getElementById('client-id-input');
+    const apiKeyInput = document.getElementById('api-key-input');
+    const accessTokenInput = document.getElementById('access-token-input');
+    const saveConfigBtn = document.getElementById('save-config-btn');
+    const loginBtn = document.getElementById('login-btn');
+    const currentFolderPath = document.getElementById('current-folder-path');
+    const statusBadge = document.getElementById('status-badge');
+    const scanProgress = document.getElementById('scan-progress');
+    const scanText = document.getElementById('scan-text');
+    const listPlaceholder = document.getElementById('list-placeholder');
+    const albumListDiv = document.getElementById('album-list');
     
-    // 設定保存と初期化
-    document.getElementById('save-config-btn').onclick = () => {
-      const clientId = document.getElementById('client-id-input').value.trim();
-      if (!clientId) return alert("Client IDを入力してください");
-      localStorage.setItem('imusic_client_id', clientId);
-      authModal.classList.add('hidden');
-      alert("設定を保存しました。リロードして認証を試してください。");
-      location.reload();
-    };
+    const tabAutoBtn = document.getElementById('tab-auto-btn');
+    const tabManualBtn = document.getElementById('tab-manual-btn');
+    const tabAutoContent = document.getElementById('tab-auto-content');
+    const tabManualContent = document.getElementById('tab-manual-content');
+    const currentOriginCode = document.getElementById('current-origin-code');
+    const copyOriginBtn = document.getElementById('copy-origin-btn');
 
-    document.getElementById('settings-btn').onclick = () => authModal.classList.remove('hidden');
+    const iframeWarningBanner = document.getElementById('iframe-warning-banner');
+    const openNewTabBtn = document.getElementById('open-new-tab-btn');
 
-    // ライブラリ初期化
-    window.onload = () => {
-      lucide.createIcons();
-      // ここにドライブのスキャンとリスト表示のメインロジックを復旧させます
-      console.log("iMusic 初期化完了");
-    };
+    const audioElement = document.getElementById('audio-element');
+    const playerMv = document.getElementById('player-mv');
+    
+    const playerJacket = document.getElementById('player-jacket');
+    const mediaTypeBadgeDot = document.getElementById('media-type-badge-dot');
+    const mediaTypeBadgeText = document.getElementById('media-type-badge-text');
+    const playingVisualizer = document.getElementById('playing-visualizer');
+    const trackTitle = document.getElementById('track-title');
+    const trackAlbum = document.getElementById('track-album');
+    const timeCurrent = document.getElementById('time-current');
+    const timeTotal = document.getElementById('time-total');
+    const progressBar = document.getElementById('progress-bar');
+    const progressBarContainer = document.getElementById('progress-bar-container');
+
+    const playPauseBtn = document.getElementById('play-pause-btn');
+    const playIcon = document.getElementById('play-icon');
+    const prevBtn = document.getElementById('prev-btn');
+    const nextBtn = document.getElementById('next-btn');
+    const shuffleBtn = document.getElementById('shuffle-btn');
+    const loopBtn = document.getElementById('loop-btn');
+    const loopBadge = document.getElementById('loop-badge');
+    const stopBtn = document.getElementById('stop-btn');
+    const volumeSlider = document.getElementById('volume-slider');
+    const volumeIcon = document.getElementById('volume-icon');
+
+    function getActiveMedia() {
+      if (currentTrackIndex === -1 || currentPlaylist.length === 0) return audioElement;
+      return currentPlaylist[currentTrackIndex].type === 'video' ? playerMv : audioElement;
+    }
+
+    window.addEventListener('load', () => {
+      try { showCurrentOrigin(); } catch(e) {}
+      try { detectIframe(); } catch(e) {}
+      try { loadSavedConfig(); } catch(e) {}
+      try { if (typeof lucide !== 'undefined') lucide.createIcons(); } catch (e) {}
+      try { initGoogleLibraries(); } catch (e) {}
+      try { setupMediaEngine(); } catch (e) {}
+    });
+
+    function detectIframe() {
+      if (window.self !== window.top) {
+        iframeWarningBanner.classList.remove('hidden');
+        openNewTabBtn.addEventListener('click', () => { window.open(window.location.href, '_blank'); });
+      }
+    }
+
+    function showCurrentOrigin() {
+      currentOriginCode.innerText = window.location.origin;
+      copyOriginBtn.addEventListener('click', () => {
+        const temp = document.createElement('textarea'); temp.value = window.location.origin;
+        document.body.appendChild(temp); temp.select(); document.execCommand('copy'); document.body.removeChild(temp);
+        showToast("ドメインをコピーしました");
+      });
+    }
+
+    tabAutoBtn.addEventListener('click', () => switchTab('auto'));
+    tabManualBtn.addEventListener('click', () => switchTab('manual'));
+
+    function switchTab(tab) {
+      activeTab = tab;
+      if (tab === 'auto') {
+        tabAutoBtn.className = "flex-1 pb-2 text-sm font-semibold border-b-2 border-blue-500 text-blue-400";
+        tabManualBtn.className = "flex-1 pb-2 text-sm font-semibold border-b-2 border-transparent text-slate-400 hover:text-slate-200";
+        tabAutoContent.classList.remove('hidden'); tabManualContent.classList.add('hidden');
+        if (CLIENT_ID) loginBtn.classList.remove('hidden');
+      } else {
+        tabManualBtn.className = "flex-1 pb-2 text-sm font-semibold border-b-2 border-blue-500 text-blue-400";
+        tabAutoBtn.className = "flex-1 pb-2 text-sm font-semibold border-b-2 border-transparent text-slate-400 hover:text-slate-200";
+        tabManualContent.classList.remove('hidden'); tabAutoContent.classList.add('hidden');
+        loginBtn.classList.add('hidden');
+      }
+    }
+
+    function showToast(message, iconName = 'info') {
+      const toast = document.getElementById('toast');
+      document.getElementById('toast-message').innerText = message;
+      document.getElementById('toast-icon').setAttribute('data-lucide', iconName);
+      try { if (typeof lucide !== 'undefined') lucide.createIcons({ attrs: { class: 'w-4 h-4 text-blue-500' } }); } catch(e) {}
+
+      toast.classList.remove('opacity-0', 'translate-y-4', 'pointer-events-none');
+      toast.classList.add('opacity-100', 'translate-y-0');
+      setTimeout(() => {
+        toast.classList.add('opacity-0', 'translate-y-4', 'pointer-events-none');
+        toast.classList.remove('opacity-100', 'translate-y-0');
+      }, 4000);
+    }
+
+    function loadSavedConfig() {
+      const c = localStorage.getItem('imusic_client_id'); const a = localStorage.getItem('imusic_api_key'); const t = localStorage.getItem('imusic_access_token');
+      if (c) { clientIdInput.value = c; CLIENT_ID = c; loginBtn.classList.remove('hidden'); }
+      if (a) { apiKeyInput.value = a; API_KEY = a; }
+      if (t) { accessTokenInput.value = t; accessToken = t; switchTab('manual'); closeModalBtn.classList.remove('hidden'); }
+    }
+
+    saveConfigBtn.addEventListener('click', () => {
+      if (activeTab === 'auto') {
+        const cid = clientIdInput.value.trim(); const akey = apiKeyInput.value.trim();
+        if (!cid) { showToast("Client ID を入力してください", "alert-circle"); return; }
+        localStorage.setItem('imusic_client_id', cid); localStorage.setItem('imusic_api_key', akey);
+        CLIENT_ID = cid; API_KEY = akey; localStorage.removeItem('imusic_access_token');
+        accessTokenInput.value = ""; accessToken = null; showToast("自動認証設定を保存しました。");
+        loginBtn.classList.remove('hidden'); initGoogleLibraries(); 
+      } else {
+        const token = accessTokenInput.value.trim(); const akey = apiKeyInput.value.trim(); 
+        if (!token) { showToast("Access Tokenを入力してください", "alert-circle"); return; }
+        localStorage.setItem('imusic_access_token', token); localStorage.setItem('imusic_api_key', akey);
+        accessToken = token; API_KEY = akey; localStorage.removeItem('imusic_client_id');
+        clientIdInput.value = ""; CLIENT_ID = ""; loginBtn.classList.add('hidden');
+        showToast("手動トークンを保存しました。"); authModal.classList.add('hidden'); closeModalBtn.classList.remove('hidden');
+        statusBadge.innerText = "connected (manual)"; statusBadge.className = "px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 font-mono text-[10px]";
+        if (typeof gapi !== 'undefined') {
+          gapi.load('client', async () => {
+            try { await gapi.client.init({ discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"], apiKey: isValidApiKey(API_KEY) ? API_KEY : undefined }); } catch (e) {}
+            scanMusicLibrary();
+          });
+        } else { scanMusicLibrary(); }
+      }
+    });
+
+    function isValidApiKey(key) {
+      if (!key) return false; const cleanKey = key.trim();
+      return cleanKey.length > 10 && /^AIzaSy[A-Za-z0-9_\-]+$/.test(cleanKey);
+    }
+
+    settingsBtn.addEventListener('click', () => authModal.classList.remove('hidden'));
+
+    function initGoogleLibraries() {
+      if (!CLIENT_ID || typeof gapi === 'undefined' || typeof google === 'undefined') return;
+      gapi.load('client', async () => {
+        try {
+          await gapi.client.init({ discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"], apiKey: isValidApiKey(API_KEY) ? API_KEY : undefined });
+          gapiInited = true; checkAuthPreconditions();
+        } catch (e) {}
+      });
+      try {
+        tokenClient = google.accounts.oauth2.initTokenClient({
+          client_id: CLIENT_ID, scope: SCOPES,
+          callback: (resp) => {
+            if (resp.error !== undefined) { showToast("認証エラー: " + resp.error, "alert-circle"); return; }
+            accessToken = resp.access_token; authModal.classList.add('hidden'); closeModalBtn.classList.remove('hidden');
+            statusBadge.innerText = "connected"; statusBadge.className = "px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 font-mono text-[10px]";
+            showToast("Google Driveにログインしました"); fetchUserProfile(); scanMusicLibrary();
+          },
+        });
+        gisInited = true; checkAuthPreconditions();
+      } catch (err) {}
+    }
+
+    function checkAuthPreconditions() { if (gapiInited && gisInited) loginBtn.disabled = false; }
+    loginBtn.addEventListener('click', () => {
+      if (window.self !== window.top) { showToast("プレビュー内からのログインはブロックされます。", "alert-triangle"); return; }
+      if (!tokenClient) return; tokenClient.requestAccessToken({ prompt: 'consent' });
+    });
+
+    async function fetchUserProfile() {
+      if (!accessToken) return;
+      try {
+        const resp = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { 'Authorization': `Bearer ${accessToken}` }});
+        const info = await resp.json();
+        if (info.picture) { userImg.src = info.picture; userAvatar.classList.remove('hidden'); }
+      } catch (e) {}
+    }
+
+    async function scanMusicLibrary() {
+      if (!accessToken) { showToast("認証されていません", "alert-circle"); return; }
+      scanProgress.classList.remove('hidden'); scanText.innerText = "「imusic」ルートフォルダを探索中...";
+      try {
+        gapi.client.setToken({ access_token: accessToken });
+        const rootSearch = await gapi.client.drive.files.list({ q: "name = 'imusic' and mimeType = 'application/vnd.google-apps.folder' and trashed = false", fields: "files(id, name)", spaces: 'drive' });
+        const rootFolders = rootSearch.result.files;
+        
+        if (!rootFolders || rootFolders.length === 0) {
+          scanProgress.classList.add('hidden'); showToast("imusicフォルダが見つかりません", "alert-circle");
+          currentFolderPath.innerText = "imusicフォルダなし"; return;
+        }
+
+        const imusicFolderId = rootFolders[0].id; currentFolderPath.innerText = "imusic (スキャン中)";
+        scanText.innerText = "フォルダ構造を解析中...";
+        const childSearch = await gapi.client.drive.files.list({ q: `'${imusicFolderId}' in parents and trashed = false`, fields: "files(id, name, mimeType)", orderBy: "name", pageSize: 1000 });
+        const children = childSearch.result.files || [];
+        const subFolders = children.filter(f => f.mimeType === 'application/vnd.google-apps.folder');
+        const directFiles = children.filter(f => f.mimeType !== 'application/vnd.google-apps.folder');
+
+        let tempLibrary = [];
+        const directMedia = directFiles.filter(f => isMediaFile(f.name));
+        if (directMedia.length > 0) {
+          tempLibrary.push({
+            id: imusicFolderId, name: "シングル (imusic直下)", isDirect: true,
+            tracks: directMedia.map(t => ({ id: t.id, name: cleanFileName(t.name), mimeType: t.mimeType, albumName: "シングル", type: getMediaType(t.name), webCoverUrl: null }))
+          });
+        }
+
+        for (let i = 0; i < subFolders.length; i++) {
+          const albumFolder = subFolders[i];
+          scanText.innerText = `読込中 (${i+1}/${subFolders.length})...`;
+          const albumContentsSearch = await gapi.client.drive.files.list({ q: `'${albumFolder.id}' in parents and trashed = false`, fields: "files(id, name, mimeType)", orderBy: "name", pageSize: 500 });
+          const contents = albumContentsSearch.result.files || [];
+          
+          const tracks = contents.filter(f => isMediaFile(f.name)).map(t => ({
+            id: t.id, name: cleanFileName(t.name), mimeType: t.mimeType, albumName: albumFolder.name, type: getMediaType(t.name), webCoverUrl: null 
+          }));
+
+          if (tracks.length > 0) tempLibrary.push({ id: albumFolder.id, name: albumFolder.name, isDirect: false, tracks: tracks });
+        }
+
+        musicLibrary = tempLibrary; renderLibrary();
+        scanProgress.classList.add('hidden'); currentFolderPath.innerText = "imusic (読込完了)";
+        showToast(`スキャン完了: ${musicLibrary.length}個のフォルダ`);
+      } catch (error) {
+        scanProgress.classList.add('hidden'); currentFolderPath.innerText = "エラー発生";
+        if (error.status === 401) { showToast("トークンの有効期限切れ", "alert-circle"); authModal.classList.remove('hidden'); }
+        else { showToast("Google Driveデータの取得に失敗", "alert-circle"); }
+      }
+    }
+
+    // ⭐【完全復元】確実に通信成功していた「Blobダウンロード方式」に戻しました
+    function fetchAuthenticatedBlobUrl(fileId) {
+      if (!accessToken) return Promise.resolve('');
+      return fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, { 
+        headers: { 'Authorization': `Bearer ${accessToken}` } 
+      })
+      .then(response => { 
+        if (!response.ok) throw new Error("HTTP status " + response.status); 
+        return response.blob(); 
+      })
+      .then(blob => URL.createObjectURL(blob));
+    }
+
+    function isAudioFile(f) { return ['mp3', 'm4a', 'wav', 'aac', 'ogg', 'flac'].includes(f.split('.').pop().toLowerCase()); }
+    function isVideoFile(f) { return ['mp4', 'mov', 'm4v', 'mkv', 'webm'].includes(f.split('.').pop().toLowerCase()); }
+    function isMediaFile(f) { return isAudioFile(f) || isVideoFile(f); }
+    function getMediaType(f) { return isVideoFile(f) ? 'video' : 'audio'; }
+    function cleanFileName(f) { return f.substring(0, f.lastIndexOf('.')) || f; }
+
+    function cleanSearchQuery(query) {
+      if (!query) return "";
+      let cleaned = query.replace(/^\s*\d+[\s\.\-_]+/g, "");
+      return cleaned.replace(/\(feat\..*?\)/gi, "").replace(/\[feat\..*?\]/gi, "")
+        .replace(/\(prod\..*?\)/gi, "").replace(/\[prod\..*?\]/gi, "")
+        .replace(/\(official.*?\)/gi, "").replace(/\[official.*?\]/gi, "")
+        .replace(/\(remix.*?\)/gi, "").replace(/\[remix.*?\]/gi, "")
+        .replace(/\(live.*?\)/gi, "").replace(/\[live.*?\]/gi, "")
+        .replace(/mv/gi, "").replace(/music video/gi, "")
+        .replace(/[\(\)\[\]「」【】]/g, "").replace(/\s+/g, " ").trim();
+    }
+
+    function parseTrackMeta(trackName) {
+      const cleaned = cleanSearchQuery(trackName);
+      const dividers = [" - ", " – ", " — ", " ~ ", " ～ ", " _ ", "－", "／", " / ", " | ", " |", "| ", " : ", " :", ": ", "・", " "];
+      for (const delim of dividers) {
+        if (cleaned.includes(delim)) {
+          const parts = cleaned.split(delim);
+          if (parts.length >= 2) {
+            const p1 = parts[0].trim(); const p2 = parts[parts.length - 1].trim(); 
+            if (p1 && p2) return { artist: p1, title: p2, hasSplit: true };
+          }
+        }
+      }
+      const quoteMatch = trackName.match(/^([^「」【】]+)[「【]([^「」【】]+)[」】]/);
+      if (quoteMatch && quoteMatch[1] && quoteMatch[2]) return { artist: quoteMatch[1].trim(), title: quoteMatch[2].trim(), hasSplit: true };
+      return { artist: "", title: cleaned, hasSplit: false };
+    }
+
+    function fetchWebArtworkJSONP(query, entity = 'musicTrack') {
+      return new Promise((resolve) => {
+        const cleaned = cleanSearchQuery(query);
+        if (!cleaned || cleaned.length < 2) { resolve(null); return; }
+        const callbackName = 'itunesCallback_' + Date.now() + '_' + Math.floor(Math.random() * 1000000);
+        window[callbackName] = function(data) {
+          delete window[callbackName];
+          const scriptEl = document.getElementById(callbackName); if (scriptEl) scriptEl.remove();
+          if (data && data.results && data.results.length > 0 && data.results[0].artworkUrl100) { resolve(data.results[0].artworkUrl100.replace('100x100bb', '600x600bb')); return; }
+          resolve(null);
+        };
+        const script = document.createElement('script'); script.id = callbackName;
+        script.src = `https://itunes.apple.com/search?term=${encodeURIComponent(cleaned)}&country=jp&limit=3&entity=${entity}&callback=${callbackName}`;
+        script.onerror = () => { delete window[callbackName]; const scriptEl = document.getElementById(callbackName); if (scriptEl) scriptEl.remove(); resolve(null); };
+        document.body.appendChild(script);
+      });
+    }
+
+    async function getTrackArtworkWithFallback(track) {
+      if (!track || track.type === 'video') return null; 
+      const meta = parseTrackMeta(track.name);
+      
+      if (meta.hasSplit && meta.artist && meta.title) {
+        const art1 = await fetchWebArtworkJSONP(`${meta.artist} ${meta.title}`, 'musicTrack'); if (art1) return art1;
+        const art2 = await fetchWebArtworkJSONP(meta.title, 'musicTrack'); if (art2) return art2;
+        const art3 = await fetchWebArtworkJSONP(meta.artist, 'musicTrack'); if (art3) return art3;
+      }
+      const rawCleaned = cleanSearchQuery(track.name);
+      if (rawCleaned) { const art4 = await fetchWebArtworkJSONP(rawCleaned, 'musicTrack'); if (art4) return art4; }
+      return null;
+    }
+
+    function renderLibrary() {
+      listPlaceholder.classList.add('hidden'); albumListDiv.classList.remove('hidden'); albumListDiv.innerHTML = '';
+      if (musicLibrary.length === 0) { listPlaceholder.classList.remove('hidden'); albumListDiv.classList.add('hidden'); return; }
+
+      musicLibrary.forEach((album, albumIdx) => {
+        const hasVideo = album.tracks.some(t => t.type === 'video');
+        const albumItem = document.createElement('div');
+        albumItem.className = "bg-slate-900/60 border border-slate-800/60 rounded-xl overflow-hidden transition-all duration-200";
+        
+        const header = document.createElement('div');
+        header.className = "p-3.5 flex items-center justify-between cursor-pointer hover:bg-slate-800/40 select-none";
+        header.innerHTML = `
+          <div class="flex items-center gap-3 min-w-0">
+            <div id="album-cover-container-${albumIdx}" class="w-11 h-11 rounded-lg bg-slate-800 flex items-center justify-center flex-shrink-0 overflow-hidden border border-slate-700/50">
+              <i data-lucide="disc" class="w-5 h-5 text-slate-500"></i>
+            </div>
+            <div class="min-w-0"><h4 class="font-bold text-sm text-slate-100 truncate">${album.name}</h4>
+            <p class="text-xs text-slate-400 mt-0.5">${album.tracks.length} 個のファイル ${hasVideo ? '• 🎬 動画あり' : ''}</p></div>
+          </div>
+          <div class="flex items-center gap-2">
+            <button class="play-album-btn p-2 bg-blue-600/10 hover:bg-blue-600 text-blue-400 hover:text-white rounded-lg transition-all" data-album-idx="${albumIdx}" title="すべて再生"><i data-lucide="play" class="w-4 h-4 fill-current"></i></button>
+            <i data-lucide="chevron-down" class="chevron-icon w-4 h-4 text-slate-400 transition-transform duration-200"></i>
+          </div>
+        `;
+
+        const tracksContainer = document.createElement('div');
+        tracksContainer.className = "hidden border-t border-slate-800/40 bg-slate-950/40 divide-y divide-slate-800/30";
+        
+        album.tracks.forEach((track, trackIdx) => {
+          const trackItem = document.createElement('div');
+          trackItem.className = "track-row p-3 flex items-center justify-between cursor-pointer hover:bg-slate-800/30 text-slate-300 transition-colors" ;
+          trackItem.dataset.albumIdx = albumIdx; trackItem.dataset.trackIdx = trackIdx;
+          
+          const isVideo = track.type === 'video';
+          const iconHtml = isVideo ? `<i data-lucide="film" class="w-3.5 h-3.5 text-slate-400"></i>` : `<span class="text-[10px] font-mono text-slate-500">${trackIdx + 1}</span>`;
+          const titleHtml = isVideo ? `<span class="text-sm font-medium truncate text-blue-300">${track.name}</span> <span class="text-[9px] font-bold bg-blue-900/50 text-blue-300 px-1.5 py-0.5 rounded ml-2 border border-blue-800/50 shrink-0">VIDEO</span>` : `<span class="text-sm font-medium truncate">${track.name}</span>`;
+
+          trackItem.innerHTML = `
+            <div class="flex items-center gap-3 min-w-0 flex-1 pr-2">
+              <span id="track-cover-preview-${albumIdx}-${trackIdx}" class="w-6 h-6 rounded bg-slate-800/85 flex items-center justify-center overflow-hidden border border-slate-700/30 flex-shrink-0">
+                ${iconHtml}
+              </span>
+              <div class="flex items-center truncate min-w-0">
+                ${titleHtml}
+              </div>
+            </div>
+            <div class="flex items-center gap-2 shrink-0"><span class="text-xs opacity-0 playing-indicator text-blue-400 font-medium">再生中</span><i data-lucide="play-circle" class="w-4 h-4 text-slate-500 hover:text-blue-400 transition-colors"></i></div>
+          `;
+          trackItem.addEventListener('click', (e) => { e.stopPropagation(); playTrack(albumIdx, trackIdx); });
+          tracksContainer.appendChild(trackItem);
+        });
+
+        header.addEventListener('click', (e) => {
+          if (e.target.closest('.play-album-btn')) return;
+          const isHidden = tracksContainer.classList.contains('hidden');
+          document.querySelectorAll('#album-list > div').forEach(el => { el.querySelector('.chevron-icon')?.classList.remove('rotate-180'); el.children[1]?.classList.add('hidden'); });
+          if (isHidden) { tracksContainer.classList.remove('hidden'); header.querySelector('.chevron-icon').classList.add('rotate-180'); }
+        });
+
+        header.querySelector('.play-album-btn').addEventListener('click', (e) => { e.stopPropagation(); playAlbum(albumIdx); });
+        albumItem.appendChild(header); albumItem.appendChild(tracksContainer); albumListDiv.appendChild(albumItem);
+      });
+      try { if (typeof lucide !== 'undefined') lucide.createIcons(); } catch(e) {}
+    }
+
+    function playAlbum(albumIdx) {
+      const album = musicLibrary[albumIdx];
+      if (!album || album.tracks.length === 0) return;
+      currentAlbum = album; originalPlaylist = [...album.tracks];
+      currentPlaylist = isShuffle ? shuffleArray([...originalPlaylist]) : [...originalPlaylist];
+      playTrackFromPlaylist(0);
+    }
+
+    function playTrack(albumIdx, trackIdx) {
+      const album = musicLibrary[albumIdx]; if (!album) return;
+      currentAlbum = album; originalPlaylist = [...album.tracks];
+      if (isShuffle) {
+        const clickedTrack = originalPlaylist[trackIdx];
+        const remaining = originalPlaylist.filter((_, idx) => idx !== trackIdx);
+        currentPlaylist = [clickedTrack, ...shuffleArray(remaining)];
+        playTrackFromPlaylist(0);
+      } else {
+        currentPlaylist = [...originalPlaylist]; playTrackFromPlaylist(trackIdx);
+      }
+    }
+
+    // ⭐【修正完了】安全なBlob方式で、かつミュートを確実に解除するロジック
+    async function playTrackFromPlaylist(index) {
+      if (currentPlaylist.length === 0) return;
+      if (index < 0 || index >= currentPlaylist.length) { if (loopMode === 'all') index = 0; else { stopPlayback(); return; } }
+      currentTrackIndex = index; const track = currentPlaylist[currentTrackIndex];
+      trackTitle.innerText = "読込中: " + track.name;
+      trackAlbum.innerText = track.albumName;
+      updateActiveRowUI(); 
+
+      // 再生前に古いメディアのソースを明示的にクリアして完全に停止させる
+      audioElement.pause(); audioElement.removeAttribute('src'); audioElement.load();
+      playerMv.pause(); playerMv.removeAttribute('src'); playerMv.load();
+
+      try {
+        setupMediaDisplay(track);
+        
+        // 確実なBlob方式でファイルを取得
+        const mediaUrl = await fetchAuthenticatedBlobUrl(track.id);
+        const activeMedia = getActiveMedia();
+        
+        activeMedia.src = mediaUrl;
+        activeMedia.volume = parseFloat(volumeSlider.value);
+        activeMedia.muted = false; // ★ここで確実にミュートを解除
+        
+        activeMedia.play().then(() => {
+          updatePlayPauseButtonUI(true); 
+          playingVisualizer.classList.remove('hidden');
+          trackTitle.innerText = track.name; // 読み込み完了後に曲名を表示
+        }).catch(e => {
+          console.warn("オートプレイ制限:", e);
+          trackTitle.innerText = track.name;
+          showToast("画面をタップしてから再生ボタンを押してください", "alert-circle");
+          updatePlayPauseButtonUI(false);
+        });
+
+      } catch (err) { 
+        showToast("ファイルの取得に失敗しました", "alert-circle"); 
+        authModal.classList.remove('hidden'); 
+      }
+    }
+
+    async function setupMediaDisplay(track) {
+      if (!currentAlbum || !track) return;
+      const expectedTrackId = track.id;
+
+      if (track.type === 'video') {
+        playerJacket.classList.add('hidden');
+        playerMv.classList.remove('hidden');
+        playerMv.muted = false; // ★UI切り替え時にもミュートを解除
+        mediaTypeBadgeDot.className = "w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse";
+        mediaTypeBadgeText.innerText = "VIDEO";
+      } else {
+        playerJacket.classList.remove('hidden');
+        playerMv.classList.add('hidden');
+        mediaTypeBadgeDot.className = "w-1.5 h-1.5 rounded-full bg-blue-500";
+        mediaTypeBadgeText.innerText = "AUDIO";
+        playerJacket.src = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 24 24' fill='none' stroke='%23475569' stroke-width='1' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'/><circle cx='12' cy='12' r='3'/></svg>";
+
+        if (track.webCoverUrl) {
+          playerJacket.src = track.webCoverUrl;
+        } else {
+          getTrackArtworkWithFallback(track).then(webArtUrl => {
+            if (!webArtUrl) return;
+            track.webCoverUrl = webArtUrl;
+            if (currentPlaylist[currentTrackIndex] && currentPlaylist[currentTrackIndex].id === expectedTrackId) playerJacket.src = webArtUrl;
+
+            const albumIdx = musicLibrary.findIndex(a => a.id === currentAlbum.id);
+            if (albumIdx !== -1) {
+              const trackIdx = musicLibrary[albumIdx].tracks.findIndex(t => t.id === track.id);
+              if (trackIdx !== -1) {
+                const trackPreview = document.getElementById(`track-cover-preview-${albumIdx}-${trackIdx}`);
+                if (trackPreview) trackPreview.innerHTML = `<img src="${webArtUrl}" class="w-full h-full object-cover">`;
+              }
+              const albumCover = document.getElementById(`album-cover-container-${albumIdx}`);
+              if (albumCover) albumCover.innerHTML = `<img src="${webArtUrl}" class="w-full h-full object-cover">`;
+            }
+          });
+        }
+      }
+    }
+
+    function updateActiveRowUI() {
+      document.querySelectorAll('.track-row').forEach(row => {
+        row.classList.remove('bg-blue-950/40', 'text-blue-400', 'font-semibold'); row.classList.add('text-slate-300');
+        row.querySelector('.playing-indicator').classList.add('opacity-0');
+      });
+      if (!currentAlbum || !currentPlaylist[currentTrackIndex]) return;
+      const albumIdx = musicLibrary.findIndex(a => a.name === currentAlbum.name); if (albumIdx === -1) return;
+      const trackIdx = musicLibrary[albumIdx].tracks.findIndex(t => t.id === currentPlaylist[currentTrackIndex].id); if (trackIdx === -1) return;
+
+      const activeRow = document.querySelector(`.track-row[data-album-idx="${albumIdx}"][data-track-idx="${trackIdx}"]`);
+      if (activeRow) {
+        activeRow.classList.add('bg-blue-950/40', 'text-blue-400', 'font-semibold'); activeRow.classList.remove('text-slate-300');
+        activeRow.querySelector('.playing-indicator').classList.remove('opacity-0');
+        const container = activeRow.parentElement;
+        if (container && container.classList.contains('hidden')) { container.classList.remove('hidden'); container.previousElementSibling.querySelector('.chevron-icon')?.classList.add('rotate-180'); }
+      }
+    }
+
+    function setupMediaEngine() {
+      [audioElement, playerMv].forEach(media => {
+        media.addEventListener('timeupdate', () => {
+          if (media !== getActiveMedia()) return;
+          if (!isNaN(media.duration)) {
+            const current = media.currentTime; const total = media.duration;
+            timeCurrent.innerText = formatTime(current); timeTotal.innerText = formatTime(total);
+            progressBar.style.width = `${(current / total) * 100}%`;
+          }
+        });
+        media.addEventListener('ended', () => {
+          if (media !== getActiveMedia()) return;
+          if (loopMode === 'one') { media.currentTime = 0; media.play(); } else { nextTrack(); }
+        });
+      });
+
+      volumeSlider.addEventListener('input', (e) => { 
+        const vol = parseFloat(e.target.value); 
+        audioElement.volume = vol; playerMv.volume = vol; 
+        updateVolumeIconUI(vol); 
+      });
+
+      progressBarContainer.addEventListener('click', (e) => {
+        const media = getActiveMedia();
+        if (isNaN(media.duration)) return;
+        const targetTime = (e.clientX - progressBarContainer.getBoundingClientRect().left) / progressBarContainer.getBoundingClientRect().width * media.duration;
+        media.currentTime = targetTime;
+      });
+    }
+
+    function formatTime(secs) { const m = Math.floor(secs / 60); const s = Math.floor(secs % 60); return `${m}:${s < 10 ? '0' : ''}${s}`; }
+    function updateVolumeIconUI(vol) {
+      let iconName = 'volume-2'; if (vol === 0) iconName = 'volume-x'; else if (vol < 0.4) iconName = 'volume'; else if (vol < 0.7) iconName = 'volume-1';
+      volumeIcon.setAttribute('data-lucide', iconName); try { if (typeof lucide !== 'undefined') lucide.createIcons(); } catch(e) {}
+    }
+
+    function togglePlayPause() {
+      const media = getActiveMedia();
+      if (media.src === "" || currentTrackIndex === -1) { if (musicLibrary.length > 0) playAlbum(0); return; }
+      if (media.paused) { 
+        media.muted = false; // 再生時にも念のためミュート解除を保証
+        media.play(); 
+        updatePlayPauseButtonUI(true); 
+        playingVisualizer.classList.remove('hidden'); 
+      } else { 
+        media.pause(); 
+        updatePlayPauseButtonUI(false); 
+        playingVisualizer.classList.add('hidden'); 
+      }
+    }
+
+    function updatePlayPauseButtonUI(isPlaying) {
+      playIcon.setAttribute('data-lucide', isPlaying ? 'pause' : 'play'); playIcon.className = `w-7 h-7 fill-current ${isPlaying ? 'ml-0' : 'ml-0.5'}`;
+      try { if (typeof lucide !== 'undefined') lucide.createIcons(); } catch(e) {}
+    }
+
+    playPauseBtn.addEventListener('click', togglePlayPause);
+
+    function stopPlayback() {
+      audioElement.pause(); audioElement.removeAttribute('src'); audioElement.load();
+      playerMv.pause(); playerMv.removeAttribute('src'); playerMv.load();
+      updatePlayPauseButtonUI(false); playingVisualizer.classList.add('hidden'); timeCurrent.innerText = "0:00"; progressBar.style.width = "0%"; showToast("停止しました");
+    }
+    stopBtn.addEventListener('click', stopPlayback);
+
+    function nextTrack() {
+      if (currentPlaylist.length === 0) return;
+      let nextIndex = currentTrackIndex + 1;
+      if (nextIndex >= currentPlaylist.length) { if (loopMode === 'all') nextIndex = 0; else { showToast("最後の曲の再生が終了しました"); stopPlayback(); return; } }
+      playTrackFromPlaylist(nextIndex);
+    }
+    nextBtn.addEventListener('click', nextTrack);
+
+    function prevTrack() {
+      if (currentPlaylist.length === 0) return;
+      const media = getActiveMedia();
+      if (media.currentTime > 3) { media.currentTime = 0; return; }
+      let prevIndex = currentTrackIndex - 1; if (prevIndex < 0) { if (loopMode === 'all') prevIndex = currentPlaylist.length - 1; else prevIndex = 0; }
+      playTrackFromPlaylist(prevIndex);
+    }
+    prevBtn.addEventListener('click', prevTrack);
+
+    loopBtn.addEventListener('click', () => {
+      if (loopMode === 'none') { loopMode = 'all'; loopBtn.classList.add('text-blue-400'); loopBtn.classList.remove('text-slate-400'); loopBadge.classList.add('hidden'); showToast("すべての曲をリピートします"); }
+      else if (loopMode === 'all') { loopMode = 'one'; loopBtn.classList.add('text-blue-400'); loopBadge.innerText = "1"; loopBadge.classList.remove('hidden'); showToast("この曲をリピートします"); }
+      else { loopMode = 'none'; loopBtn.classList.remove('text-blue-400'); loopBtn.classList.add('text-slate-400'); loopBadge.classList.add('hidden'); showToast("リピートを解除しました"); }
+    });
+
+    shuffleBtn.addEventListener('click', () => {
+      isShuffle = !isShuffle;
+      if (isShuffle) {
+        shuffleBtn.classList.add('text-blue-400'); shuffleBtn.classList.remove('text-slate-400'); showToast("シャッフル再生をオンにしました");
+        if (currentPlaylist.length > 0 && currentTrackIndex !== -1) {
+          const currentTrack = currentPlaylist[currentTrackIndex]; const remaining = originalPlaylist.filter(t => t.id !== currentTrack.id);
+          currentPlaylist = [currentTrack, ...shuffleArray(remaining)]; currentTrackIndex = 0;
+        }
+      } else {
+        shuffleBtn.classList.remove('text-blue-400'); shuffleBtn.classList.add('text-slate-400'); showToast("シャッフル再生をオフにしました");
+        if (currentPlaylist.length > 0 && currentTrackIndex !== -1) {
+          const currentTrack = currentPlaylist[currentTrackIndex]; currentPlaylist = [...originalPlaylist]; currentTrackIndex = currentPlaylist.findIndex(t => t.id === currentTrack.id);
+        }
+      }
+    });
+
+    function shuffleArray(array) { for (let i = array.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [array[i], array[j]] = [array[j], array[i]]; } return array; }
+    reloadBtn.addEventListener('click', () => { if (accessToken) scanMusicLibrary(); else { showToast("Google Driveに接続していません", "alert-circle"); authModal.classList.remove('hidden'); } });
+    closeModalBtn.addEventListener('click', () => authModal.classList.add('hidden'));
+
   </script>
 </body>
 </html>
