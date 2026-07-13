@@ -15,6 +15,12 @@
     }
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+
+    /* ★ ③ 曲名のスマートスクロール用アニメーション */
+    @keyframes scroll-marquee {
+      0%, 15% { transform: translateX(0); }
+      85%, 100% { transform: translateX(var(--scroll-dist)); }
+    }
   </style>
 </head>
 <body class="h-screen flex flex-col overflow-hidden select-none">
@@ -114,7 +120,7 @@
 
   <main class="flex-1 flex flex-col md:flex-row overflow-hidden relative">
     
-    <div class="flex-1 flex flex-col border-r border-slate-800/80 overflow-hidden h-1/2 md:h-full">
+    <div class="flex-none flex flex-col border-r border-slate-800/80 overflow-hidden h-1/3 md:h-full md:w-[35%] lg:w-[30%]">
       <div class="bg-slate-900/40 px-4 py-2 border-b border-slate-800/50 flex items-center justify-between text-xs">
         <div class="flex items-center gap-1.5 text-slate-400">
           <i data-lucide="folder" class="w-3.5 h-3.5 text-yellow-500"></i>
@@ -140,9 +146,9 @@
       </div>
     </div>
 
-    <div class="flex-1 flex flex-col bg-gradient-to-b from-slate-900 to-slate-950 overflow-y-auto md:overflow-hidden h-1/2 md:h-full p-4 md:p-6 justify-between">
+    <div class="flex-1 flex flex-col bg-gradient-to-b from-slate-900 to-slate-950 overflow-y-auto md:overflow-hidden p-4 md:p-6 justify-center gap-3">
       
-      <div class="relative w-full max-w-[340px] md:max-w-[400px] aspect-square mx-auto rounded-2xl overflow-hidden bg-slate-950 shadow-2xl border border-slate-800/80 flex items-center justify-center group">
+      <div class="relative w-full max-w-[390px] md:max-w-[480px] aspect-square mx-auto rounded-2xl overflow-hidden bg-slate-950 shadow-2xl border border-slate-800/80 flex items-center justify-center group shrink-0">
         <img id="player-jacket" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 24 24' fill='none' stroke='%23334155' stroke-width='1' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'/><circle cx='12' cy='12' r='3'/></svg>" 
              alt="Jacket Cover" 
              class="w-full h-full object-cover transition-all duration-500">
@@ -162,12 +168,14 @@
         </div>
       </div>
 
-      <div class="text-center mt-4 mb-2 max-w-[400px] mx-auto w-full">
-        <h3 id="track-title" class="text-lg md:text-xl font-bold truncate px-4 text-slate-100">再生していません</h3>
+      <div class="text-center mt-2 mb-1 max-w-[400px] mx-auto w-full px-2 overflow-hidden flex-shrink-0" id="track-title-container">
+        <div style="-webkit-mask-image: linear-gradient(to right, transparent, black 5%, black 95%, transparent); mask-image: linear-gradient(to right, transparent, black 5%, black 95%, transparent);">
+          <h3 id="track-title" class="text-lg md:text-xl font-bold text-slate-100 inline-block whitespace-nowrap px-4 transition-transform">再生していません</h3>
+        </div>
         <p id="track-album" class="text-xs md:text-sm text-slate-400 mt-1 truncate px-4">アルバムを選択してください</p>
       </div>
 
-      <div class="w-full max-w-[400px] mx-auto px-2">
+      <div class="w-full max-w-[400px] mx-auto px-2 flex-shrink-0">
         <div class="flex items-center justify-between text-[11px] text-slate-400 font-mono mb-1">
           <span id="time-current">0:00</span>
           <span id="time-total">0:00</span>
@@ -180,7 +188,7 @@
         </div>
       </div>
 
-      <div class="w-full max-w-[400px] mx-auto flex flex-col gap-4 mt-3">
+      <div class="w-full max-w-[400px] mx-auto flex flex-col gap-4 mt-2 flex-shrink-0">
         <div class="flex items-center justify-between px-4">
           <button id="shuffle-btn" class="p-2.5 text-slate-400 hover:text-white transition-colors rounded-full hover:bg-slate-800/40" title="シャッフル">
             <i data-lucide="shuffle" class="w-5 h-5"></i>
@@ -277,6 +285,7 @@
     const playingVisualizer = document.getElementById('playing-visualizer');
     const trackTitle = document.getElementById('track-title');
     const trackAlbum = document.getElementById('track-album');
+    const trackTitleContainer = document.getElementById('track-title-container'); // ★スクロール用に追加
     const timeCurrent = document.getElementById('time-current');
     const timeTotal = document.getElementById('time-total');
     const progressBar = document.getElementById('progress-bar');
@@ -310,6 +319,11 @@
       try { if (typeof lucide !== 'undefined') lucide.createIcons(); } catch (e) {}
       try { initGoogleLibraries(); } catch (e) {}
       try { setupMediaEngine(); } catch (e) {}
+      
+      // ウィンドウサイズが変わった時にスクロール判定をやり直す
+      window.addEventListener('resize', () => {
+        if (trackTitle.innerText !== "再生していません") updateMarquee();
+      });
     });
 
     function detectIframe() {
@@ -519,7 +533,7 @@
         const directMedia = directFiles.filter(f => isMediaFile(f.name));
         if (directMedia.length > 0) {
           tempLibrary.push({
-            id: imusicFolderId, name: "シングル (imusic直下)", isDirect: true,
+            id: imusicFolderId, name: "シングル", isDirect: true, // ★直下のフォルダ名を「シングル」に統一しファイル数を非表示化
             tracks: directMedia.map(t => ({ id: t.id, name: cleanFileName(t.name), mimeType: t.mimeType, albumName: "シングル", type: getMediaType(t.name), webCoverUrl: null }))
           });
         }
@@ -637,13 +651,15 @@
         
         const header = document.createElement('div');
         header.className = "p-3.5 flex items-center justify-between cursor-pointer hover:bg-slate-800/40 select-none";
+        
+        // ★ ① ファイル数を非表示化し、フォルダ名とアイコンだけをスッキリ表示
         header.innerHTML = `
           <div class="flex items-center gap-3 min-w-0">
-            <div id="album-cover-container-${albumIdx}" class="w-11 h-11 rounded-lg bg-slate-800 flex items-center justify-center flex-shrink-0 overflow-hidden border border-slate-700/50">
+            <div id="album-cover-container-${albumIdx}" class="w-10 h-10 rounded-lg bg-slate-800 flex items-center justify-center flex-shrink-0 overflow-hidden border border-slate-700/50">
               <i data-lucide="disc" class="w-5 h-5 text-slate-500"></i>
             </div>
             <div class="min-w-0"><h4 class="font-bold text-sm text-slate-100 truncate">${album.name}</h4>
-            <p class="text-xs text-slate-400 mt-0.5">${album.tracks.length} 個のファイル ${hasVideo ? '• 🎬 動画あり' : ''}</p></div>
+            ${hasVideo ? '<p class="text-[10px] text-slate-400 mt-0.5">🎬 動画あり</p>' : ''}</div>
           </div>
           <div class="flex items-center gap-2">
             <button class="play-album-btn p-2 bg-blue-600/10 hover:bg-blue-600 text-blue-400 hover:text-white rounded-lg transition-all" data-album-idx="${albumIdx}" title="すべて再生"><i data-lucide="play" class="w-4 h-4 fill-current"></i></button>
@@ -712,12 +728,37 @@
       }
     }
 
+    // ★ ③ 文字がはみ出た場合にアニメーションを適用する関数
+    function updateMarquee() {
+      // アニメーションを一旦リセット
+      trackTitle.style.animation = 'none';
+      trackTitle.style.transform = 'translateX(0)';
+      void trackTitle.offsetWidth; // 強制再描画（リフロー）
+      
+      const containerWidth = trackTitleContainer.clientWidth;
+      const textWidth = trackTitle.scrollWidth;
+      
+      // テキストがコンテナより大きい場合のみスクロール開始
+      if (textWidth > containerWidth) {
+        // パディング等による見切れを防ぐため、少し余裕を持たせてスクロール距離を計算
+        const dist = (textWidth - containerWidth) + 32; 
+        trackTitle.style.setProperty('--scroll-dist', `-${dist}px`);
+        
+        // 文字の長さに応じてスクロール速度を動的に調整（長すぎると速くなりすぎないように）
+        const duration = Math.max(4, Math.abs(dist) / 30) + 1; 
+        
+        // ピンポン（alternate）で往復ループ再生
+        trackTitle.style.animation = `scroll-marquee ${duration}s linear infinite alternate`;
+      }
+    }
+
     async function playTrackFromPlaylist(index) {
       if (currentPlaylist.length === 0) return;
       if (index < 0 || index >= currentPlaylist.length) { if (loopMode === 'all') index = 0; else { stopPlayback(); return; } }
       currentTrackIndex = index; const track = currentPlaylist[currentTrackIndex];
       trackTitle.innerText = "読込中: " + track.name;
       trackAlbum.innerText = track.albumName;
+      updateMarquee(); // ★ タイトル変更時にマーキーをチェック
       updateActiveRowUI(); 
 
       const activeMedia = track.type === 'video' ? playerMv : audioElement;
@@ -744,9 +785,11 @@
           updatePlayPauseButtonUI(true); 
           playingVisualizer.classList.remove('hidden');
           trackTitle.innerText = track.name; 
+          updateMarquee(); // ★ 再生開始後（曲名更新後）にもマーキーをチェック
         }).catch(e => {
           console.warn("オートプレイ制限:", e);
           trackTitle.innerText = track.name;
+          updateMarquee(); // ★
           showToast("画面をタップしてから再生ボタンを押してください", "alert-circle");
           updatePlayPauseButtonUI(false);
         });
@@ -875,7 +918,9 @@
     function stopPlayback() {
       audioElement.pause(); audioElement.removeAttribute('src'); audioElement.load();
       playerMv.pause(); playerMv.removeAttribute('src'); playerMv.load();
-      updatePlayPauseButtonUI(false); playingVisualizer.classList.add('hidden'); timeCurrent.innerText = "0:00"; progressBar.style.width = "0%"; showToast("停止しました");
+      updatePlayPauseButtonUI(false); playingVisualizer.classList.add('hidden'); 
+      trackTitle.innerText = "再生していません"; updateMarquee();
+      timeCurrent.innerText = "0:00"; progressBar.style.width = "0%"; showToast("停止しました");
     }
     stopBtn.addEventListener('click', stopPlayback);
 
