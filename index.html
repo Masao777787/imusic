@@ -292,13 +292,11 @@
     const stopBtn = document.getElementById('stop-btn');
     const volumeSlider = document.getElementById('volume-slider');
     const volumeIcon = document.getElementById('volume-icon');
+
     const settingsBtn = document.getElementById('settings-btn');
     const reloadBtn = document.getElementById('reload-btn');
     const userAvatar = document.getElementById('user-avatar');
     const userImg = document.getElementById('user-img');
-
-
-
 
     function getActiveMedia() {
       if (currentTrackIndex === -1 || currentPlaylist.length === 0) return audioElement;
@@ -401,20 +399,15 @@
 
     settingsBtn.addEventListener('click', () => authModal.classList.remove('hidden'));
 
-    // -----------------------------------------------------
-    // ★ 修正版：Google Libraries 初期化処理（ポーリングとエラー検知を追加）
-    // -----------------------------------------------------
     function initGoogleLibraries() {
       if (!CLIENT_ID) return;
 
-      // Googleのスクリプト群が読み込まれるまで待機（ポーリング）
       if (typeof gapi === 'undefined' || typeof google === 'undefined' || typeof google.accounts === 'undefined') {
         console.log("Google scripts loading...");
         setTimeout(initGoogleLibraries, 500);
         return;
       }
 
-      // gapi (Google Drive API) の初期化（gapiInitedフラグで1回だけ実行）
       if (!gapiInited) {
         gapi.load('client', async () => {
           try {
@@ -430,7 +423,6 @@
         });
       }
 
-      // Google Identity Services (tokenClient) の初期化（エラー検知コールバックを追加）
       try {
         tokenClient = google.accounts.oauth2.initTokenClient({
           client_id: CLIENT_ID, 
@@ -470,30 +462,23 @@
       }
     }
 
-    // -----------------------------------------------------
-    // ★ 修正版：ログインボタン押下処理（エラーブロックと再試行を追加）
-    // -----------------------------------------------------
     loginBtn.addEventListener('click', () => {
-      // 1. ローカルファイルチェック
       if (window.location.protocol === 'file:') {
         alert("【エラー: URLが file:/// になっています】\n\nGoogleの仕様により、ファイルを直接ダブルクリックして開いた状態ではログイン機能が完全にブロックされます。\nVS Codeの「Live Server」を使うか、手動トークン方式を使用してください。");
         return;
       }
 
-      // 2. iframeプレビューチェック
       if (window.self !== window.top) { 
         showToast("プレビュー内からのログインはブロックされます。新しいタブで開いてください。", "alert-triangle"); 
         return; 
       }
       
-      // 3. 準備未完了チェック（通信遅延などへの対応）
       if (!tokenClient) { 
         alert("【エラー】\n認証システムの準備ができていません。\n通信が完了するまで待つか、設定を見直してください。");
         initGoogleLibraries();
         return; 
       }
 
-      // 4. トークンリクエスト
       try {
         tokenClient.requestAccessToken({ prompt: 'consent' });
       } catch (err) {
@@ -735,20 +720,27 @@
       trackAlbum.innerText = track.albumName;
       updateActiveRowUI(); 
 
-      audioElement.pause(); audioElement.removeAttribute('src'); audioElement.load();
-      playerMv.pause(); playerMv.removeAttribute('src'); playerMv.load();
+      const activeMedia = track.type === 'video' ? playerMv : audioElement;
+      const inactiveMedia = track.type === 'video' ? audioElement : playerMv;
+
+      inactiveMedia.pause(); inactiveMedia.removeAttribute('src'); inactiveMedia.load();
+      
+      activeMedia.pause(); 
+      activeMedia.removeAttribute('src'); 
+      activeMedia.load();
+      activeMedia.muted = true;
 
       try {
         setupMediaDisplay(track);
         
         const mediaUrl = await fetchAuthenticatedBlobUrl(track.id);
-        const activeMedia = getActiveMedia();
         
         activeMedia.src = mediaUrl;
-        activeMedia.volume = parseFloat(volumeSlider.value);
-        activeMedia.muted = false; 
         
         activeMedia.play().then(() => {
+          activeMedia.muted = false; 
+          activeMedia.volume = parseFloat(volumeSlider.value);
+          
           updatePlayPauseButtonUI(true); 
           playingVisualizer.classList.remove('hidden');
           trackTitle.innerText = track.name; 
@@ -772,7 +764,6 @@
       if (track.type === 'video') {
         playerJacket.classList.add('hidden');
         playerMv.classList.remove('hidden');
-        playerMv.muted = false; 
         mediaTypeBadgeDot.className = "w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse";
         mediaTypeBadgeText.innerText = "VIDEO";
       } else {
