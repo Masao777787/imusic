@@ -232,7 +232,7 @@
   <script src="https://apis.google.com/js/api.js" async defer></script>
 
   <script>
-    const APP_VERSION = "2.2.0";
+    const APP_VERSION = "2.3.0-iOS-Background";
     let CLIENT_ID = "";
     let API_KEY = "";
     const SCOPES = "https://www.googleapis.com/auth/drive.readonly";
@@ -251,6 +251,10 @@
 
     let loopMode = 'none'; 
     let isShuffle = false;
+
+    // ★ iOSスリープ対策: 先読み（Prefetch）用の変数
+    let prefetchedNextUrl = null;
+    let prefetchedNextTrackId = null;
 
     const authModal = document.getElementById('auth-modal');
     const closeModalBtn = document.getElementById('close-modal-btn');
@@ -285,7 +289,7 @@
     const playingVisualizer = document.getElementById('playing-visualizer');
     const trackTitle = document.getElementById('track-title');
     const trackAlbum = document.getElementById('track-album');
-    const trackTitleContainer = document.getElementById('track-title-container'); // ★スクロール用に追加
+    const trackTitleContainer = document.getElementById('track-title-container');
     const timeCurrent = document.getElementById('time-current');
     const timeTotal = document.getElementById('time-total');
     const progressBar = document.getElementById('progress-bar');
@@ -320,7 +324,6 @@
       try { initGoogleLibraries(); } catch (e) {}
       try { setupMediaEngine(); } catch (e) {}
       
-      // ウィンドウサイズが変わった時にスクロール判定をやり直す
       window.addEventListener('resize', () => {
         if (trackTitle.innerText !== "再生していません") updateMarquee();
       });
@@ -417,7 +420,6 @@
       if (!CLIENT_ID) return;
 
       if (typeof gapi === 'undefined' || typeof google === 'undefined' || typeof google.accounts === 'undefined') {
-        console.log("Google scripts loading...");
         setTimeout(initGoogleLibraries, 500);
         return;
       }
@@ -533,7 +535,7 @@
         const directMedia = directFiles.filter(f => isMediaFile(f.name));
         if (directMedia.length > 0) {
           tempLibrary.push({
-            id: imusicFolderId, name: "シングル", isDirect: true, // ★直下のフォルダ名を「シングル」に統一しファイル数を非表示化
+            id: imusicFolderId, name: "シングル", isDirect: true, 
             tracks: directMedia.map(t => ({ id: t.id, name: cleanFileName(t.name), mimeType: t.mimeType, albumName: "シングル", type: getMediaType(t.name), webCoverUrl: null }))
           });
         }
@@ -652,7 +654,6 @@
         const header = document.createElement('div');
         header.className = "p-3.5 flex items-center justify-between cursor-pointer hover:bg-slate-800/40 select-none";
         
-        // ★ ① ファイル数を非表示化し、フォルダ名とアイコンだけをスッキリ表示
         header.innerHTML = `
           <div class="flex items-center gap-3 min-w-0">
             <div id="album-cover-container-${albumIdx}" class="w-10 h-10 rounded-lg bg-slate-800 flex items-center justify-center flex-shrink-0 overflow-hidden border border-slate-700/50">
@@ -728,37 +729,75 @@
       }
     }
 
-    // ★ ③ 文字がはみ出た場合にアニメーションを適用する関数
     function updateMarquee() {
-      // アニメーションを一旦リセット
       trackTitle.style.animation = 'none';
       trackTitle.style.transform = 'translateX(0)';
-      void trackTitle.offsetWidth; // 強制再描画（リフロー）
+      void trackTitle.offsetWidth; 
       
       const containerWidth = trackTitleContainer.clientWidth;
       const textWidth = trackTitle.scrollWidth;
       
-      // テキストがコンテナより大きい場合のみスクロール開始
       if (textWidth > containerWidth) {
-        // パディング等による見切れを防ぐため、少し余裕を持たせてスクロール距離を計算
         const dist = (textWidth - containerWidth) + 32; 
         trackTitle.style.setProperty('--scroll-dist', `-${dist}px`);
-        
-        // 文字の長さに応じてスクロール速度を動的に調整（長すぎると速くなりすぎないように）
         const duration = Math.max(4, Math.abs(dist) / 30) + 1; 
-        
-        // ピンポン（alternate）で往復ループ再生
         trackTitle.style.animation = `scroll-marquee ${duration}s linear infinite alternate`;
+      }
+    }
+
+    // ★ iOSスリープ対策: 次の曲を裏でダウンロードして待機させる関数
+    async function prefetchNextTrack() {
+      if (currentPlaylist.length === 0) return;
+      let nextIndex = currentTrackIndex + 1;
+      
+      if (nextIndex >= currentPlaylist.length) {
+        if (loopMode === 'all') nextIndex = 0;
+        else return; 
+      }
+      
+      const nextTrack = currentPlaylist[nextIndex];
+      // 既に先読み済みならスキップ
+      if (prefetchedNextTrackId === nextTrack.id) return; 
+
+      try {
+        console.log("バックグラウンド先読み開始: " + nextTrack.name);
+        const url = await fetchAuthenticatedBlobUrl(nextTrack.id);
+        
+        // 古い先読みキャッシュがあれば破棄してメモリ解放
+        if (prefetchedNextUrl) URL.revokeObjectURL(prefetchedNextUrl);
+        
+        prefetchedNextUrl = url;
+        prefetchedNextTrackId = nextTrack.id;
+      } catch (e) {
+        console.warn("先読みエラー:", e);
+      }
+    }
+
+    // ★ iOSスリープ対策: ロック画面へのメディア情報連携
+    function updateMediaSession(track) {
+      if ('mediaSession' in navigator) {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: track.name,
+          artist: track.albumName || 'iMusic',
+          artwork: track.webCoverUrl ? [{ src: track.webCoverUrl, sizes: '600x600', type: 'image/jpeg' }] : []
+        });
+
+        // ロック画面からの操作イベントを紐付け
+        navigator.mediaSession.setActionHandler('play', togglePlayPause);
+        navigator.mediaSession.setActionHandler('pause', togglePlayPause);
+        navigator.mediaSession.setActionHandler('previoustrack', prevTrack);
+        navigator.mediaSession.setActionHandler('nexttrack', nextTrack);
       }
     }
 
     async function playTrackFromPlaylist(index) {
       if (currentPlaylist.length === 0) return;
       if (index < 0 || index >= currentPlaylist.length) { if (loopMode === 'all') index = 0; else { stopPlayback(); return; } }
+      
       currentTrackIndex = index; const track = currentPlaylist[currentTrackIndex];
       trackTitle.innerText = "読込中: " + track.name;
       trackAlbum.innerText = track.albumName;
-      updateMarquee(); // ★ タイトル変更時にマーキーをチェック
+      updateMarquee();
       updateActiveRowUI(); 
 
       const activeMedia = track.type === 'video' ? playerMv : audioElement;
@@ -774,7 +813,16 @@
       try {
         setupMediaDisplay(track);
         
-        const mediaUrl = await fetchAuthenticatedBlobUrl(track.id);
+        let mediaUrl;
+        // ★ iOSスリープ対策: 先読みキャッシュがあれば即座に使用、なければ通常ダウンロード
+        if (prefetchedNextTrackId === track.id && prefetchedNextUrl) {
+          console.log("先読みキャッシュから再生: " + track.name);
+          mediaUrl = prefetchedNextUrl;
+          prefetchedNextUrl = null; 
+          prefetchedNextTrackId = null;
+        } else {
+          mediaUrl = await fetchAuthenticatedBlobUrl(track.id);
+        }
         
         activeMedia.src = mediaUrl;
         
@@ -785,11 +833,18 @@
           updatePlayPauseButtonUI(true); 
           playingVisualizer.classList.remove('hidden');
           trackTitle.innerText = track.name; 
-          updateMarquee(); // ★ 再生開始後（曲名更新後）にもマーキーをチェック
+          updateMarquee();
+          
+          // ★ ロック画面表示を更新
+          updateMediaSession(track);
+
+          // ★ 次の曲の先読みをバックグラウンドで開始
+          prefetchNextTrack();
+
         }).catch(e => {
           console.warn("オートプレイ制限:", e);
           trackTitle.innerText = track.name;
-          updateMarquee(); // ★
+          updateMarquee(); 
           showToast("画面をタップしてから再生ボタンを押してください", "alert-circle");
           updatePlayPauseButtonUI(false);
         });
@@ -823,6 +878,9 @@
             if (!webArtUrl) return;
             track.webCoverUrl = webArtUrl;
             if (currentPlaylist[currentTrackIndex] && currentPlaylist[currentTrackIndex].id === expectedTrackId) playerJacket.src = webArtUrl;
+            
+            // ★ アートワークが取得できたらロック画面の情報も更新する
+            updateMediaSession(track);
 
             const albumIdx = musicLibrary.findIndex(a => a.id === currentAlbum.id);
             if (albumIdx !== -1) {
@@ -867,9 +925,11 @@
             progressBar.style.width = `${(current / total) * 100}%`;
           }
         });
+        
         media.addEventListener('ended', () => {
           if (media !== getActiveMedia()) return;
-          if (loopMode === 'one') { media.currentTime = 0; media.play(); } else { nextTrack(); }
+          if (loopMode === 'one') { media.currentTime = 0; media.play(); } 
+          else { nextTrack(); }
         });
       });
 
@@ -966,7 +1026,6 @@
     function shuffleArray(array) { for (let i = array.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [array[i], array[j]] = [array[j], array[i]]; } return array; }
     reloadBtn.addEventListener('click', () => { if (accessToken) scanMusicLibrary(); else { showToast("Google Driveに接続していません", "alert-circle"); authModal.classList.remove('hidden'); } });
     closeModalBtn.addEventListener('click', () => authModal.classList.add('hidden'));
-
   </script>
 </body>
 </html>
