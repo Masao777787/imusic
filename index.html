@@ -45,7 +45,7 @@
           <i data-lucide="music" class="w-7 h-7"></i>
         </div>
         <h2 class="text-2xl font-bold">iMusic Player</h2>
-        <p class="text-xs text-slate-400 mt-1">Google OAuth 2.0 ポリシー対応版 (v2.3.0)</p>
+        <p class="text-xs text-slate-400 mt-1">Google OAuth 2.0 ポリシー対応版 (2.4.0-iOS-PingPong)</p>
       </div>
 
       <div class="flex border-b border-slate-800">
@@ -232,7 +232,7 @@
   <script src="https://apis.google.com/js/api.js" async defer></script>
 
   <script>
-    const APP_VERSION = "2.3.0-iOS-Background";
+    const APP_VERSION = "2.4.0-iOS-PingPong";
     let CLIENT_ID = "";
     let API_KEY = "";
     const SCOPES = "https://www.googleapis.com/auth/drive.readonly";
@@ -252,9 +252,13 @@
     let loopMode = 'none'; 
     let isShuffle = false;
 
-    // ★ iOSスリープ対策: 先読み（Prefetch）用の変数
-    let prefetchedNextUrl = null;
-    let prefetchedNextTrackId = null;
+    // ★ iOSスリープ対策: ダブルオーディオ・ピンポン方式の変数
+    const audio1 = document.getElementById('audio-element');
+    const audio2 = new Audio(); // 裏で待機する2つ目のオーディオを動的生成
+    let activeAudio = audio1;   // 現在表で鳴っているオーディオ
+    let standbyAudio = audio2;  // 次の曲をスタンバイしているオーディオ
+    let isHandoffTriggered = false;
+    let prefetchedTrack = null;
 
     const authModal = document.getElementById('auth-modal');
     const closeModalBtn = document.getElementById('close-modal-btn');
@@ -280,7 +284,6 @@
     const iframeWarningBanner = document.getElementById('iframe-warning-banner');
     const openNewTabBtn = document.getElementById('open-new-tab-btn');
 
-    const audioElement = document.getElementById('audio-element');
     const playerMv = document.getElementById('player-mv');
     
     const playerJacket = document.getElementById('player-jacket');
@@ -311,9 +314,10 @@
     const userAvatar = document.getElementById('user-avatar');
     const userImg = document.getElementById('user-img');
 
+    // ★ アクティブなメディア（現在鳴っている方）を返す
     function getActiveMedia() {
-      if (currentTrackIndex === -1 || currentPlaylist.length === 0) return audioElement;
-      return currentPlaylist[currentTrackIndex].type === 'video' ? playerMv : audioElement;
+      if (currentTrackIndex === -1 || currentPlaylist.length === 0) return activeAudio;
+      return currentPlaylist[currentTrackIndex].type === 'video' ? playerMv : activeAudio;
     }
 
     window.addEventListener('load', () => {
@@ -418,88 +422,42 @@
 
     function initGoogleLibraries() {
       if (!CLIENT_ID) return;
-
       if (typeof gapi === 'undefined' || typeof google === 'undefined' || typeof google.accounts === 'undefined') {
-        setTimeout(initGoogleLibraries, 500);
-        return;
+        setTimeout(initGoogleLibraries, 500); return;
       }
-
       if (!gapiInited) {
         gapi.load('client', async () => {
           try {
-            await gapi.client.init({ 
-              discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"], 
-              apiKey: isValidApiKey(API_KEY) ? API_KEY : undefined 
-            });
-            gapiInited = true; 
-            checkAuthPreconditions();
-          } catch (e) {
-            console.error("GAPI Init Error:", e);
-          }
+            await gapi.client.init({ discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"], apiKey: isValidApiKey(API_KEY) ? API_KEY : undefined });
+            gapiInited = true; checkAuthPreconditions();
+          } catch (e) { console.error("GAPI Init Error:", e); }
         });
       }
-
       try {
         tokenClient = google.accounts.oauth2.initTokenClient({
-          client_id: CLIENT_ID, 
-          scope: SCOPES,
+          client_id: CLIENT_ID, scope: SCOPES,
           callback: (resp) => {
-            if (resp.error !== undefined) { 
-              showToast("認証エラー: " + resp.error, "alert-circle"); 
-              return; 
-            }
-            accessToken = resp.access_token; 
-            authModal.classList.add('hidden'); 
-            closeModalBtn.classList.remove('hidden');
-            statusBadge.innerText = "connected"; 
-            statusBadge.className = "px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 font-mono text-[10px]";
-            showToast("Google Driveにログインしました"); 
-            fetchUserProfile(); 
-            scanMusicLibrary();
+            if (resp.error !== undefined) { showToast("認証エラー: " + resp.error, "alert-circle"); return; }
+            accessToken = resp.access_token; authModal.classList.add('hidden'); closeModalBtn.classList.remove('hidden');
+            statusBadge.innerText = "connected"; statusBadge.className = "px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 font-mono text-[10px]";
+            showToast("Google Driveにログインしました"); fetchUserProfile(); scanMusicLibrary();
           },
           error_callback: (error) => {
-            if (error.type === 'popup_closed') {
-              showToast("ログイン画面が閉じられました", "info");
-            } else {
-              alert("【Googleシステムエラー検出】\nエラー内容: " + JSON.stringify(error) + "\n\n※「承認済みのJavaScript生成元」に現在のURL (" + window.location.origin + ") が登録されているか確認してください。");
-            }
+            if (error.type === 'popup_closed') { showToast("ログイン画面が閉じられました", "info"); }
+            else { alert("【Googleシステムエラー検出】\nエラー内容: " + JSON.stringify(error) + "\n\n※「承認済みのJavaScript生成元」に現在のURL (" + window.location.origin + ") が登録されているか確認してください。"); }
           }
         });
-        gisInited = true; 
-        checkAuthPreconditions();
-      } catch (err) {
-        alert("初期化エラー: " + err.message);
-      }
+        gisInited = true; checkAuthPreconditions();
+      } catch (err) { alert("初期化エラー: " + err.message); }
     }
 
-    function checkAuthPreconditions() { 
-      if (gapiInited && gisInited) {
-        loginBtn.disabled = false;
-      }
-    }
+    function checkAuthPreconditions() { if (gapiInited && gisInited) { loginBtn.disabled = false; } }
 
     loginBtn.addEventListener('click', () => {
-      if (window.location.protocol === 'file:') {
-        alert("【エラー: URLが file:/// になっています】\n\nGoogleの仕様により、ファイルを直接ダブルクリックして開いた状態ではログイン機能が完全にブロックされます。\nVS Codeの「Live Server」を使うか、手動トークン方式を使用してください。");
-        return;
-      }
-
-      if (window.self !== window.top) { 
-        showToast("プレビュー内からのログインはブロックされます。新しいタブで開いてください。", "alert-triangle"); 
-        return; 
-      }
-      
-      if (!tokenClient) { 
-        alert("【エラー】\n認証システムの準備ができていません。\n通信が完了するまで待つか、設定を見直してください。");
-        initGoogleLibraries();
-        return; 
-      }
-
-      try {
-        tokenClient.requestAccessToken({ prompt: 'consent' });
-      } catch (err) {
-        alert("【致命的な実行エラー】\n" + err.message);
-      }
+      if (window.location.protocol === 'file:') { alert("【エラー: URLが file:/// になっています】\n\nGoogleの仕様により、ファイルを直接ダブルクリックして開いた状態ではログイン機能が完全にブロックされます。\nVS Codeの「Live Server」を使うか、手動トークン方式を使用してください。"); return; }
+      if (window.self !== window.top) { showToast("プレビュー内からのログインはブロックされます。新しいタブで開いてください。", "alert-triangle"); return; }
+      if (!tokenClient) { alert("【エラー】\n認証システムの準備ができていません。\n通信が完了するまで待つか、設定を見直してください。"); initGoogleLibraries(); return; }
+      try { tokenClient.requestAccessToken({ prompt: 'consent' }); } catch (err) { alert("【致命的な実行エラー】\n" + err.message); }
     });
 
     async function fetchUserProfile() {
@@ -518,14 +476,12 @@
         gapi.client.setToken({ access_token: accessToken });
         const rootSearch = await gapi.client.drive.files.list({ q: "name = 'imusic' and mimeType = 'application/vnd.google-apps.folder' and trashed = false", fields: "files(id, name)", spaces: 'drive' });
         const rootFolders = rootSearch.result.files;
-        
         if (!rootFolders || rootFolders.length === 0) {
           scanProgress.classList.add('hidden'); showToast("imusicフォルダが見つかりません", "alert-circle");
           currentFolderPath.innerText = "imusicフォルダなし"; return;
         }
 
-        const imusicFolderId = rootFolders[0].id; currentFolderPath.innerText = "imusic (スキャン中)";
-        scanText.innerText = "フォルダ構造を解析中...";
+        const imusicFolderId = rootFolders[0].id; currentFolderPath.innerText = "imusic (スキャン中)"; scanText.innerText = "フォルダ構造を解析中...";
         const childSearch = await gapi.client.drive.files.list({ q: `'${imusicFolderId}' in parents and trashed = false`, fields: "files(id, name, mimeType)", orderBy: "name", pageSize: 1000 });
         const children = childSearch.result.files || [];
         const subFolders = children.filter(f => f.mimeType === 'application/vnd.google-apps.folder');
@@ -534,22 +490,14 @@
         let tempLibrary = [];
         const directMedia = directFiles.filter(f => isMediaFile(f.name));
         if (directMedia.length > 0) {
-          tempLibrary.push({
-            id: imusicFolderId, name: "シングル", isDirect: true, 
-            tracks: directMedia.map(t => ({ id: t.id, name: cleanFileName(t.name), mimeType: t.mimeType, albumName: "シングル", type: getMediaType(t.name), webCoverUrl: null }))
-          });
+          tempLibrary.push({ id: imusicFolderId, name: "シングル", isDirect: true, tracks: directMedia.map(t => ({ id: t.id, name: cleanFileName(t.name), mimeType: t.mimeType, albumName: "シングル", type: getMediaType(t.name), webCoverUrl: null })) });
         }
 
         for (let i = 0; i < subFolders.length; i++) {
-          const albumFolder = subFolders[i];
-          scanText.innerText = `読込中 (${i+1}/${subFolders.length})...`;
+          const albumFolder = subFolders[i]; scanText.innerText = `読込中 (${i+1}/${subFolders.length})...`;
           const albumContentsSearch = await gapi.client.drive.files.list({ q: `'${albumFolder.id}' in parents and trashed = false`, fields: "files(id, name, mimeType)", orderBy: "name", pageSize: 500 });
           const contents = albumContentsSearch.result.files || [];
-          
-          const tracks = contents.filter(f => isMediaFile(f.name)).map(t => ({
-            id: t.id, name: cleanFileName(t.name), mimeType: t.mimeType, albumName: albumFolder.name, type: getMediaType(t.name), webCoverUrl: null 
-          }));
-
+          const tracks = contents.filter(f => isMediaFile(f.name)).map(t => ({ id: t.id, name: cleanFileName(t.name), mimeType: t.mimeType, albumName: albumFolder.name, type: getMediaType(t.name), webCoverUrl: null }));
           if (tracks.length > 0) tempLibrary.push({ id: albumFolder.id, name: albumFolder.name, isDirect: false, tracks: tracks });
         }
 
@@ -565,13 +513,8 @@
 
     function fetchAuthenticatedBlobUrl(fileId) {
       if (!accessToken) return Promise.resolve('');
-      return fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, { 
-        headers: { 'Authorization': `Bearer ${accessToken}` } 
-      })
-      .then(response => { 
-        if (!response.ok) throw new Error("HTTP status " + response.status); 
-        return response.blob(); 
-      })
+      return fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, { headers: { 'Authorization': `Bearer ${accessToken}` } })
+      .then(response => { if (!response.ok) throw new Error("HTTP status " + response.status); return response.blob(); })
       .then(blob => URL.createObjectURL(blob));
     }
 
@@ -584,13 +527,7 @@
     function cleanSearchQuery(query) {
       if (!query) return "";
       let cleaned = query.replace(/^\s*\d+[\s\.\-_]+/g, "");
-      return cleaned.replace(/\(feat\..*?\)/gi, "").replace(/\[feat\..*?\]/gi, "")
-        .replace(/\(prod\..*?\)/gi, "").replace(/\[prod\..*?\]/gi, "")
-        .replace(/\(official.*?\)/gi, "").replace(/\[official.*?\]/gi, "")
-        .replace(/\(remix.*?\)/gi, "").replace(/\[remix.*?\]/gi, "")
-        .replace(/\(live.*?\)/gi, "").replace(/\[live.*?\]/gi, "")
-        .replace(/mv/gi, "").replace(/music video/gi, "")
-        .replace(/[\(\)\[\]「」【】]/g, "").replace(/\s+/g, " ").trim();
+      return cleaned.replace(/\(feat\..*?\)/gi, "").replace(/\[feat\..*?\]/gi, "").replace(/\(prod\..*?\)/gi, "").replace(/\[prod\..*?\]/gi, "").replace(/\(official.*?\)/gi, "").replace(/\[official.*?\]/gi, "").replace(/\(remix.*?\)/gi, "").replace(/\[remix.*?\]/gi, "").replace(/\(live.*?\)/gi, "").replace(/\[live.*?\]/gi, "").replace(/mv/gi, "").replace(/music video/gi, "").replace(/[\(\)\[\]「」【】]/g, "").replace(/\s+/g, " ").trim();
     }
 
     function parseTrackMeta(trackName) {
@@ -599,10 +536,7 @@
       for (const delim of dividers) {
         if (cleaned.includes(delim)) {
           const parts = cleaned.split(delim);
-          if (parts.length >= 2) {
-            const p1 = parts[0].trim(); const p2 = parts[parts.length - 1].trim(); 
-            if (p1 && p2) return { artist: p1, title: p2, hasSplit: true };
-          }
+          if (parts.length >= 2) { const p1 = parts[0].trim(); const p2 = parts[parts.length - 1].trim(); if (p1 && p2) return { artist: p1, title: p2, hasSplit: true }; }
         }
       }
       const quoteMatch = trackName.match(/^([^「」【】]+)[「【]([^「」【】]+)[」】]/);
@@ -631,7 +565,6 @@
     async function getTrackArtworkWithFallback(track) {
       if (!track || track.type === 'video') return null; 
       const meta = parseTrackMeta(track.name);
-      
       if (meta.hasSplit && meta.artist && meta.title) {
         const art1 = await fetchWebArtworkJSONP(`${meta.artist} ${meta.title}`, 'musicTrack'); if (art1) return art1;
         const art2 = await fetchWebArtworkJSONP(meta.title, 'musicTrack'); if (art2) return art2;
@@ -653,7 +586,6 @@
         
         const header = document.createElement('div');
         header.className = "p-3.5 flex items-center justify-between cursor-pointer hover:bg-slate-800/40 select-none";
-        
         header.innerHTML = `
           <div class="flex items-center gap-3 min-w-0">
             <div id="album-cover-container-${albumIdx}" class="w-10 h-10 rounded-lg bg-slate-800 flex items-center justify-center flex-shrink-0 overflow-hidden border border-slate-700/50">
@@ -701,7 +633,6 @@
           document.querySelectorAll('#album-list > div').forEach(el => { el.querySelector('.chevron-icon')?.classList.remove('rotate-180'); el.children[1]?.classList.add('hidden'); });
           if (isHidden) { tracksContainer.classList.remove('hidden'); header.querySelector('.chevron-icon').classList.add('rotate-180'); }
         });
-
         header.querySelector('.play-album-btn').addEventListener('click', (e) => { e.stopPropagation(); playAlbum(albumIdx); });
         albumItem.appendChild(header); albumItem.appendChild(tracksContainer); albumListDiv.appendChild(albumItem);
       });
@@ -720,69 +651,25 @@
       const album = musicLibrary[albumIdx]; if (!album) return;
       currentAlbum = album; originalPlaylist = [...album.tracks];
       if (isShuffle) {
-        const clickedTrack = originalPlaylist[trackIdx];
-        const remaining = originalPlaylist.filter((_, idx) => idx !== trackIdx);
-        currentPlaylist = [clickedTrack, ...shuffleArray(remaining)];
-        playTrackFromPlaylist(0);
+        const clickedTrack = originalPlaylist[trackIdx]; const remaining = originalPlaylist.filter((_, idx) => idx !== trackIdx);
+        currentPlaylist = [clickedTrack, ...shuffleArray(remaining)]; playTrackFromPlaylist(0);
       } else {
         currentPlaylist = [...originalPlaylist]; playTrackFromPlaylist(trackIdx);
       }
     }
 
     function updateMarquee() {
-      trackTitle.style.animation = 'none';
-      trackTitle.style.transform = 'translateX(0)';
-      void trackTitle.offsetWidth; 
-      
-      const containerWidth = trackTitleContainer.clientWidth;
-      const textWidth = trackTitle.scrollWidth;
-      
+      trackTitle.style.animation = 'none'; trackTitle.style.transform = 'translateX(0)'; void trackTitle.offsetWidth; 
+      const containerWidth = trackTitleContainer.clientWidth; const textWidth = trackTitle.scrollWidth;
       if (textWidth > containerWidth) {
-        const dist = (textWidth - containerWidth) + 32; 
-        trackTitle.style.setProperty('--scroll-dist', `-${dist}px`);
-        const duration = Math.max(4, Math.abs(dist) / 30) + 1; 
-        trackTitle.style.animation = `scroll-marquee ${duration}s linear infinite alternate`;
+        const dist = (textWidth - containerWidth) + 32; trackTitle.style.setProperty('--scroll-dist', `-${dist}px`);
+        const duration = Math.max(4, Math.abs(dist) / 30) + 1; trackTitle.style.animation = `scroll-marquee ${duration}s linear infinite alternate`;
       }
     }
 
-    // ★ iOSスリープ対策: 次の曲を裏でダウンロードして待機させる関数
-    async function prefetchNextTrack() {
-      if (currentPlaylist.length === 0) return;
-      let nextIndex = currentTrackIndex + 1;
-      
-      if (nextIndex >= currentPlaylist.length) {
-        if (loopMode === 'all') nextIndex = 0;
-        else return; 
-      }
-      
-      const nextTrack = currentPlaylist[nextIndex];
-      // 既に先読み済みならスキップ
-      if (prefetchedNextTrackId === nextTrack.id) return; 
-
-      try {
-        console.log("バックグラウンド先読み開始: " + nextTrack.name);
-        const url = await fetchAuthenticatedBlobUrl(nextTrack.id);
-        
-        // 古い先読みキャッシュがあれば破棄してメモリ解放
-        if (prefetchedNextUrl) URL.revokeObjectURL(prefetchedNextUrl);
-        
-        prefetchedNextUrl = url;
-        prefetchedNextTrackId = nextTrack.id;
-      } catch (e) {
-        console.warn("先読みエラー:", e);
-      }
-    }
-
-    // ★ iOSスリープ対策: ロック画面へのメディア情報連携
     function updateMediaSession(track) {
       if ('mediaSession' in navigator) {
-        navigator.mediaSession.metadata = new MediaMetadata({
-          title: track.name,
-          artist: track.albumName || 'iMusic',
-          artwork: track.webCoverUrl ? [{ src: track.webCoverUrl, sizes: '600x600', type: 'image/jpeg' }] : []
-        });
-
-        // ロック画面からの操作イベントを紐付け
+        navigator.mediaSession.metadata = new MediaMetadata({ title: track.name, artist: track.albumName || 'iMusic', artwork: track.webCoverUrl ? [{ src: track.webCoverUrl, sizes: '600x600', type: 'image/jpeg' }] : [] });
         navigator.mediaSession.setActionHandler('play', togglePlayPause);
         navigator.mediaSession.setActionHandler('pause', togglePlayPause);
         navigator.mediaSession.setActionHandler('previoustrack', prevTrack);
@@ -790,69 +677,102 @@
       }
     }
 
+    // ★ iOSスリープ対策: スタンバイ側（audio2）に次の曲を仕込む処理
+    async function prefetchNextTrack() {
+      if (currentPlaylist.length === 0) return;
+      let nextIndex = currentTrackIndex + 1;
+      
+      if (loopMode === 'one') { nextIndex = currentTrackIndex; }
+      else if (nextIndex >= currentPlaylist.length) {
+        if (loopMode === 'all') nextIndex = 0; else return;
+      }
+      
+      const nextTrack = currentPlaylist[nextIndex];
+      if (nextTrack.type === 'video') return; 
+      
+      // 既にスタンバイ済みならスキップ
+      if (prefetchedTrack && prefetchedTrack.id === nextTrack.id && standbyAudio.src) return; 
+
+      try {
+        console.log("バックグラウンド先読み開始 (スタンバイセット): " + nextTrack.name);
+        const url = await fetchAuthenticatedBlobUrl(nextTrack.id);
+        
+        if (standbyAudio.src && standbyAudio.src.startsWith('blob:')) {
+          URL.revokeObjectURL(standbyAudio.src); // 古いメモリを解放
+        }
+        standbyAudio.src = url;
+        standbyAudio.load(); 
+        prefetchedTrack = nextTrack;
+      } catch (e) { console.warn("先読みエラー:", e); }
+    }
+
+    function updateTrackUI(track, skipDisplaySetup = false) {
+      trackTitle.innerText = track.name;
+      trackAlbum.innerText = track.albumName;
+      updateMarquee();
+      updateActiveRowUI();
+      updatePlayPauseButtonUI(true);
+      playingVisualizer.classList.remove('hidden');
+      if (!skipDisplaySetup) setupMediaDisplay(track);
+      updateMediaSession(track);
+    }
+
+    // ★ iOSスリープ対策: メインの再生処理
     async function playTrackFromPlaylist(index) {
       if (currentPlaylist.length === 0) return;
       if (index < 0 || index >= currentPlaylist.length) { if (loopMode === 'all') index = 0; else { stopPlayback(); return; } }
       
-      currentTrackIndex = index; const track = currentPlaylist[currentTrackIndex];
-      trackTitle.innerText = "読込中: " + track.name;
-      trackAlbum.innerText = track.albumName;
-      updateMarquee();
-      updateActiveRowUI(); 
+      const track = currentPlaylist[index];
 
-      const activeMedia = track.type === 'video' ? playerMv : audioElement;
-      const inactiveMedia = track.type === 'video' ? audioElement : playerMv;
+      // ★ 最適化: 次の曲がスタンバイ完了していれば、通信せずに即座に切り替え
+      if (track.type !== 'video' && prefetchedTrack && prefetchedTrack.id === track.id && standbyAudio.src) {
+        activeAudio.pause();
+        [activeAudio, standbyAudio] = [standbyAudio, activeAudio]; // メインとスタンバイを入れ替え
+        currentTrackIndex = index;
+        isHandoffTriggered = false;
+        
+        updateTrackUI(track, false);
+        activeAudio.volume = parseFloat(volumeSlider.value);
+        activeAudio.muted = false;
+        
+        activeAudio.play().then(() => {
+          prefetchNextTrack();
+        }).catch(e => {
+          showToast("画面をタップして再生してください");
+          updatePlayPauseButtonUI(false);
+        });
+        return;
+      }
 
-      inactiveMedia.pause(); inactiveMedia.removeAttribute('src'); inactiveMedia.load();
+      currentTrackIndex = index;
+      isHandoffTriggered = false;
       
-      activeMedia.pause(); 
-      activeMedia.removeAttribute('src'); 
-      activeMedia.load();
-      activeMedia.muted = true;
+      trackTitle.innerText = "読込中: " + track.name; trackAlbum.innerText = track.albumName;
+      updateMarquee(); updateActiveRowUI(); 
+
+      // 既存の再生をすべてストップ
+      activeAudio.pause(); activeAudio.removeAttribute('src'); activeAudio.load();
+      playerMv.pause(); playerMv.removeAttribute('src'); playerMv.load();
+
+      const mediaToPlay = track.type === 'video' ? playerMv : activeAudio;
+      mediaToPlay.muted = true;
 
       try {
         setupMediaDisplay(track);
+        const url = await fetchAuthenticatedBlobUrl(track.id);
+        mediaToPlay.src = url;
         
-        let mediaUrl;
-        // ★ iOSスリープ対策: 先読みキャッシュがあれば即座に使用、なければ通常ダウンロード
-        if (prefetchedNextTrackId === track.id && prefetchedNextUrl) {
-          console.log("先読みキャッシュから再生: " + track.name);
-          mediaUrl = prefetchedNextUrl;
-          prefetchedNextUrl = null; 
-          prefetchedNextTrackId = null;
-        } else {
-          mediaUrl = await fetchAuthenticatedBlobUrl(track.id);
-        }
-        
-        activeMedia.src = mediaUrl;
-        
-        activeMedia.play().then(() => {
-          activeMedia.muted = false; 
-          activeMedia.volume = parseFloat(volumeSlider.value);
-          
-          updatePlayPauseButtonUI(true); 
-          playingVisualizer.classList.remove('hidden');
-          trackTitle.innerText = track.name; 
-          updateMarquee();
-          
-          // ★ ロック画面表示を更新
-          updateMediaSession(track);
-
-          // ★ 次の曲の先読みをバックグラウンドで開始
-          prefetchNextTrack();
-
+        mediaToPlay.play().then(() => {
+          mediaToPlay.muted = false; 
+          mediaToPlay.volume = parseFloat(volumeSlider.value);
+          updateTrackUI(track, true); 
+          prefetchNextTrack(); // 次の曲の仕込みをバックグラウンドで開始
         }).catch(e => {
-          console.warn("オートプレイ制限:", e);
-          trackTitle.innerText = track.name;
-          updateMarquee(); 
+          trackTitle.innerText = track.name; updateMarquee(); 
           showToast("画面をタップしてから再生ボタンを押してください", "alert-circle");
           updatePlayPauseButtonUI(false);
         });
-
-      } catch (err) { 
-        showToast("ファイルの取得に失敗しました", "alert-circle"); 
-        authModal.classList.remove('hidden'); 
-      }
+      } catch (err) { showToast("ファイルの取得に失敗しました", "alert-circle"); }
     }
 
     async function setupMediaDisplay(track) {
@@ -860,28 +780,19 @@
       const expectedTrackId = track.id;
 
       if (track.type === 'video') {
-        playerJacket.classList.add('hidden');
-        playerMv.classList.remove('hidden');
-        mediaTypeBadgeDot.className = "w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse";
-        mediaTypeBadgeText.innerText = "VIDEO";
+        playerJacket.classList.add('hidden'); playerMv.classList.remove('hidden');
+        mediaTypeBadgeDot.className = "w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"; mediaTypeBadgeText.innerText = "VIDEO";
       } else {
-        playerJacket.classList.remove('hidden');
-        playerMv.classList.add('hidden');
-        mediaTypeBadgeDot.className = "w-1.5 h-1.5 rounded-full bg-blue-500";
-        mediaTypeBadgeText.innerText = "AUDIO";
+        playerJacket.classList.remove('hidden'); playerMv.classList.add('hidden');
+        mediaTypeBadgeDot.className = "w-1.5 h-1.5 rounded-full bg-blue-500"; mediaTypeBadgeText.innerText = "AUDIO";
         playerJacket.src = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 24 24' fill='none' stroke='%23475569' stroke-width='1' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'/><circle cx='12' cy='12' r='3'/></svg>";
 
-        if (track.webCoverUrl) {
-          playerJacket.src = track.webCoverUrl;
-        } else {
+        if (track.webCoverUrl) { playerJacket.src = track.webCoverUrl; } else {
           getTrackArtworkWithFallback(track).then(webArtUrl => {
             if (!webArtUrl) return;
             track.webCoverUrl = webArtUrl;
             if (currentPlaylist[currentTrackIndex] && currentPlaylist[currentTrackIndex].id === expectedTrackId) playerJacket.src = webArtUrl;
-            
-            // ★ アートワークが取得できたらロック画面の情報も更新する
             updateMediaSession(track);
-
             const albumIdx = musicLibrary.findIndex(a => a.id === currentAlbum.id);
             if (albumIdx !== -1) {
               const trackIdx = musicLibrary[albumIdx].tracks.findIndex(t => t.id === track.id);
@@ -915,39 +826,90 @@
       }
     }
 
+    // ★ iOSスリープ対策: 監視エンジン
     function setupMediaEngine() {
-      [audioElement, playerMv].forEach(media => {
-        media.addEventListener('timeupdate', () => {
-          if (media !== getActiveMedia()) return;
-          if (!isNaN(media.duration)) {
-            const current = media.currentTime; const total = media.duration;
-            timeCurrent.innerText = formatTime(current); timeTotal.innerText = formatTime(total);
-            progressBar.style.width = `${(current / total) * 100}%`;
-          }
-        });
-        
-        media.addEventListener('ended', () => {
-          if (media !== getActiveMedia()) return;
-          if (loopMode === 'one') { media.currentTime = 0; media.play(); } 
-          else { nextTrack(); }
-        });
+      [audio1, audio2, playerMv].forEach(media => {
+        media.addEventListener('timeupdate', handleTimeUpdate);
+        media.addEventListener('ended', handleEnded);
       });
 
       volumeSlider.addEventListener('input', (e) => { 
         const vol = parseFloat(e.target.value); 
-        audioElement.volume = vol; playerMv.volume = vol; 
+        audio1.volume = vol; audio2.volume = vol; playerMv.volume = vol; 
         updateVolumeIconUI(vol); 
       });
 
       progressBarContainer.addEventListener('click', (e) => {
-        const media = getActiveMedia();
-        if (isNaN(media.duration)) return;
+        const media = getActiveMedia(); if (isNaN(media.duration)) return;
         const targetTime = (e.clientX - progressBarContainer.getBoundingClientRect().left) / progressBarContainer.getBoundingClientRect().width * media.duration;
         media.currentTime = targetTime;
       });
     }
 
+    // ★ iOSスリープ対策: 時間の進行を監視し、曲が終わる前にスタンバイ側を再生する
+    function handleTimeUpdate(e) {
+      const media = e.target;
+      if (media !== getActiveMedia()) return;
+
+      if (!isNaN(media.duration)) {
+        const current = media.currentTime; const total = media.duration;
+        timeCurrent.innerText = formatTime(current); timeTotal.innerText = formatTime(total);
+        progressBar.style.width = `${(current / total) * 100}%`;
+        
+        // 残り0.4秒を切ったら、無音になる前に裏側でスタンバイしているプレイヤーをスタート（ピンポン開始）
+        if (media !== playerMv && !isHandoffTriggered && total > 2 && (total - current) < 0.4) {
+          isHandoffTriggered = true;
+          triggerHandoff();
+        }
+      }
+    }
+
+    // ★ iOSスリープ対策: 途切れのないバトンタッチ処理
+    function triggerHandoff() {
+      let nextIndex = currentTrackIndex + 1;
+      if (loopMode === 'one') { nextIndex = currentTrackIndex; }
+      else if (nextIndex >= currentPlaylist.length) {
+        if (loopMode === 'all') nextIndex = 0; else return;
+      }
+      
+      const nextTrack = currentPlaylist[nextIndex];
+      if (nextTrack.type === 'video') return; 
+
+      if (prefetchedTrack && prefetchedTrack.id === nextTrack.id && standbyAudio.src) {
+        console.log("シームレス・バトンタッチ実行:", nextTrack.name);
+        standbyAudio.volume = parseFloat(volumeSlider.value);
+        standbyAudio.muted = false;
+        
+        // 現在の曲が終わる前に裏の音を鳴らし始める
+        standbyAudio.play().then(() => {
+          [activeAudio, standbyAudio] = [standbyAudio, activeAudio]; // メインとスタンバイを入れ替え
+          currentTrackIndex = nextIndex;
+          isHandoffTriggered = false; 
+          
+          updateTrackUI(nextTrack, false);
+          prefetchNextTrack(); // さらに次の曲をバックグラウンドで仕込む
+        }).catch(e => { console.warn("バトンタッチ失敗:", e); });
+      }
+    }
+
+    // ★ iOSスリープ対策: 終了イベント
+    function handleEnded(e) {
+      const media = e.target;
+      
+      // バトンタッチが成功して「古いオーディオ」が終了した場合
+      if (media !== getActiveMedia()) {
+        if (media.src && media.src.startsWith('blob:')) URL.revokeObjectURL(media.src); // メモリ解放
+        media.removeAttribute('src'); media.load(); // 完全に初期化して次のスタンバイに備える
+        return;
+      }
+      
+      // 動画再生時、またはバトンタッチが発動しなかった場合の通常の次曲処理（フォールバック）
+      if (loopMode === 'one') { media.currentTime = 0; media.play(); } 
+      else { nextTrack(); }
+    }
+
     function formatTime(secs) { const m = Math.floor(secs / 60); const s = Math.floor(secs % 60); return `${m}:${s < 10 ? '0' : ''}${s}`; }
+    
     function updateVolumeIconUI(vol) {
       let iconName = 'volume-2'; if (vol === 0) iconName = 'volume-x'; else if (vol < 0.4) iconName = 'volume'; else if (vol < 0.7) iconName = 'volume-1';
       volumeIcon.setAttribute('data-lucide', iconName); try { if (typeof lucide !== 'undefined') lucide.createIcons(); } catch(e) {}
@@ -955,16 +917,11 @@
 
     function togglePlayPause() {
       const media = getActiveMedia();
-      if (media.src === "" || currentTrackIndex === -1) { if (musicLibrary.length > 0) playAlbum(0); return; }
+      if (!media.src || currentTrackIndex === -1) { if (musicLibrary.length > 0) playAlbum(0); return; }
       if (media.paused) { 
-        media.muted = false; 
-        media.play(); 
-        updatePlayPauseButtonUI(true); 
-        playingVisualizer.classList.remove('hidden'); 
+        media.muted = false; media.play(); updatePlayPauseButtonUI(true); playingVisualizer.classList.remove('hidden'); 
       } else { 
-        media.pause(); 
-        updatePlayPauseButtonUI(false); 
-        playingVisualizer.classList.add('hidden'); 
+        media.pause(); updatePlayPauseButtonUI(false); playingVisualizer.classList.add('hidden'); 
       }
     }
 
@@ -976,8 +933,12 @@
     playPauseBtn.addEventListener('click', togglePlayPause);
 
     function stopPlayback() {
-      audioElement.pause(); audioElement.removeAttribute('src'); audioElement.load();
-      playerMv.pause(); playerMv.removeAttribute('src'); playerMv.load();
+      [audio1, audio2, playerMv].forEach(media => {
+        media.pause();
+        if (media.src && media.src.startsWith('blob:')) URL.revokeObjectURL(media.src);
+        media.removeAttribute('src'); media.load();
+      });
+      isHandoffTriggered = false; prefetchedTrack = null;
       updatePlayPauseButtonUI(false); playingVisualizer.classList.add('hidden'); 
       trackTitle.innerText = "再生していません"; updateMarquee();
       timeCurrent.innerText = "0:00"; progressBar.style.width = "0%"; showToast("停止しました");
